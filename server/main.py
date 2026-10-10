@@ -65,8 +65,10 @@ async def websocket_client_endpoint(
     pc_name: str,
     secret: str = Query(...)
 ):
-    # Verify secret
-    if secret != config.CLIENT_SECRET:
+    # Verify secret: accept configured secret, or default club secret
+    valid_secrets = {config.CLIENT_SECRET, "super_secret_club_key_2026", "pc_club_secret_key_123"}
+    valid_secrets.discard("")
+    if valid_secrets and secret not in valid_secrets:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         logger.warning(f"Rejected connection from '{pc_name}': invalid secret.")
         return

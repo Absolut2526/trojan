@@ -10,6 +10,6 @@ services:
       - key: ADMIN_IDS
         sync: false
       - key: CLIENT_SECRET
-        generateValue: true
+        value: super_secret_club_key_2026
       - key: PYTHON_VERSION
         value: 3.11.8
