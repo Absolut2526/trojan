@@ -7,16 +7,65 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
+import os
+import json
+
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcs_registry.json")
+
 class ConnectionManager:
     def __init__(self):
         # pc_name -> WebSocket
         self.active_clients: Dict[str, WebSocket] = {}
         # pc_name -> dict with specs/last_seen/stats
         self.client_info: Dict[str, Dict[str, Any]] = {}
+        # hwid -> pc_name
+        self.hwid_mapping: Dict[str, str] = self._load_registry()
         # request_id -> asyncio.Future for command responses
         self.pending_requests: Dict[str, asyncio.Future] = {}
         # Web dashboard sockets
         self.dashboard_sockets: list[WebSocket] = []
+
+    def _load_registry(self) -> Dict[str, str]:
+        if os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Помилка завантаження pcs_registry.json: {e}")
+        return {}
+
+    def _save_registry(self):
+        try:
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.hwid_mapping, f, indent=4)
+        except Exception as e:
+            logger.error(f"Помилка збереження pcs_registry.json: {e}")
+
+    def get_or_assign_pc_name(self, hwid: str) -> str:
+        """
+        Повертає закріплене ім'я ПК (PC-01, PC-02...) для даного заліза (HWID).
+        Перший комп'ютер назавжди отримує PC-01, другий — PC-02 тощо.
+        """
+        if hwid in self.hwid_mapping:
+            return self.hwid_mapping[hwid]
+
+        # Знаходимо найменший вільний номер
+        existing_numbers = set()
+        for name in self.hwid_mapping.values():
+            if name.startswith("PC-"):
+                num_part = name.split("-")[1]
+                if num_part.isdigit():
+                    existing_numbers.add(int(num_part))
+
+        next_num = 1
+        while next_num in existing_numbers:
+            next_num += 1
+
+        assigned_name = f"PC-{next_num:02d}"
+        self.hwid_mapping[hwid] = assigned_name
+        self._save_registry()
+        logger.info(f"Нове залізо HWID={hwid} зареєстровано як '{assigned_name}'")
+        return assigned_name
 
     async def connect_client(self, pc_name: str, websocket: WebSocket, initial_info: Optional[Dict[str, Any]] = None):
         if pc_name in self.active_clients:

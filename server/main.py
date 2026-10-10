@@ -63,7 +63,8 @@ async def get_index():
 async def websocket_client_endpoint(
     websocket: WebSocket,
     pc_name: str,
-    secret: str = Query(...)
+    secret: str = Query(...),
+    hwid: Optional[str] = Query(None)
 ):
     # Verify secret: accept configured secret, or default club secret
     valid_secrets = {config.CLIENT_SECRET, "super_secret_club_key_2026", "pc_club_secret_key_123"}
@@ -73,7 +74,16 @@ async def websocket_client_endpoint(
         logger.warning(f"Rejected connection from '{pc_name}': invalid secret.")
         return
 
+    # Якщо клієнт передав свій унікальний HWID — закріплюємо або видаємо йому постійне ім'я (PC-01, PC-02...)
+    if hwid:
+        assigned_name = manager.get_or_assign_pc_name(hwid)
+        if assigned_name != pc_name:
+            logger.info(f"Клієнт підключився як '{pc_name}', але за HWID йому призначено '{assigned_name}'")
+            pc_name = assigned_name
+
     await manager.connect_client(pc_name, websocket)
+    # Повідомляємо клієнту його офіційне ім'я
+    await websocket.send_json({"type": "assigned_name", "pc_name": pc_name})
     asyncio.create_task(notify_pc_status(pc_name, "online"))
 
     try:

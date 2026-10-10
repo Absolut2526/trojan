@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 import urllib.request
+import uuid
 import webbrowser
 from typing import Any, Dict
 
@@ -38,25 +39,59 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger("PC-Client")
+# За замовчуванням вшито адресу твого хоста на Render та секретний ключ
+DEFAULT_SERVER_URL = "wss://trojan-y9he.onrender.com/ws/client"
+DEFAULT_SECRET = "super_secret_club_key_2026"
+
+def get_hardware_id() -> str:
+    """
+    Генерує унікальний ідентифікатор заліза комп'ютера (HWID).
+    Він залишається однаковим навіть після перезавантаження чи оновлення Windows.
+    """
+    try:
+        import hashlib
+        # На Windows найнадійніше - GUID материнської плати або MachineGuid
+        if platform.system().lower() == "windows":
+            try:
+                import winreg
+                reg = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
+                key = winreg.OpenKey(reg, r"SOFTWARE\Microsoft\Cryptography")
+                guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                if guid:
+                    return hashlib.md5(guid.encode('utf-8')).hexdigest()[:12].upper()
+            except Exception:
+                pass
+        
+        # Резервний варіант (MAC-адреса мережевої карти + ім'я хоста)
+        node = str(uuid.getnode()) + socket.gethostname()
+        return hashlib.md5(node.encode('utf-8')).hexdigest()[:12].upper()
+    except Exception:
+        return "UNKNOWN_HWID"
 
 def load_or_create_config() -> dict:
-    default_name = socket.gethostname()
+    """
+    Завантажує client_config.json, якщо він є.
+    Якщо файлу немає — використовує вшиті налаштування Render за замовчуванням!
+    Тобто .exe працює автономно без будь-яких файлів конфігурації.
+    """
+    hwid = get_hardware_id()
     default_config = {
-        "server_url": "ws://localhost:8000/ws/client",
-        "secret": "pc_club_secret_key_123",
-        "pc_name": default_name
+        "server_url": DEFAULT_SERVER_URL,
+        "secret": DEFAULT_SECRET,
+        "pc_name": f"PC_{hwid[:4]}",
+        "hwid": hwid
     }
 
     if not os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_config, f, indent=4)
-        logger.info(f"Створено конфігураційний файл '{CONFIG_FILE}' з іменем ПК: {default_name}")
         return default_config
 
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            data["hwid"] = hwid
+            if "server_url" not in data: data["server_url"] = DEFAULT_SERVER_URL
+            if "secret" not in data: data["secret"] = DEFAULT_SECRET
+            return data
     except Exception as e:
         logger.error(f"Помилка читання {CONFIG_FILE}: {e}")
         return default_config
@@ -315,9 +350,10 @@ async def run_client():
     server_base = cfg["server_url"].rstrip("/")
     secret = cfg["secret"]
     pc_name = cfg["pc_name"]
+    hwid = cfg.get("hwid", get_hardware_id())
 
-    uri = f"{server_base}/{pc_name}?secret={secret}"
-    logger.info(f"Підключення до сервера як '{pc_name}'...")
+    uri = f"{server_base}/{pc_name}?secret={secret}&hwid={hwid}"
+    logger.info(f"Підключення до сервера (HWID={hwid})...")
 
     while True:
         try:
@@ -329,7 +365,7 @@ async def run_client():
                 close_timeout=10,
                 max_size=25 * 1024 * 1024
             ) as websocket:
-                logger.info(f"✅ Успішно підключено до сервера як {pc_name}!")
+                logger.info("✅ Успішно підключено до сервера!")
                 
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
 
@@ -337,6 +373,14 @@ async def run_client():
                     async for message_str in websocket:
                         try:
                             msg = json.loads(message_str)
+                            msg_type = msg.get("type")
+
+                            # Сервер повідомив закріплене ім'я комп'ютера (наприклад PC-01, PC-02)
+                            if msg_type == "assigned_name":
+                                official_name = msg.get("pc_name")
+                                logger.info(f"🌟 Цьому комп'ютеру офіційно призначено ім'я: {official_name}")
+                                continue
+
                             req_id = msg.get("request_id")
                             action = msg.get("action")
                             params = msg.get("params", {})
