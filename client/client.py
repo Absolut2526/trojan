@@ -305,7 +305,8 @@ async def heartbeat_sender(websocket):
             }
             await websocket.send(json.dumps({"type": "heartbeat", "stats": stats}))
             await asyncio.sleep(5)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Heartbeat завершено: {e}")
             break
 
 async def run_client():
@@ -320,7 +321,14 @@ async def run_client():
 
     while True:
         try:
-            async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as websocket:
+            # ping_interval=15 та ping_timeout=20 тримають з'єднання живим через проксі Render
+            async with websockets.connect(
+                uri,
+                ping_interval=15,
+                ping_timeout=20,
+                close_timeout=10,
+                max_size=25 * 1024 * 1024
+            ) as websocket:
                 logger.info(f"✅ Успішно підключено до сервера як {pc_name}!")
                 
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
@@ -352,8 +360,8 @@ async def run_client():
                         if stream_task:
                             stream_task.cancel()
 
-        except (websockets.ConnectionClosedError, websockets.WebSocketException, OSError) as e:
-            logger.warning(f"З'єднання втрачено: {e}. Спроба перепідключення через 5 секунд...")
+        except (websockets.ConnectionClosedError, websockets.ConnectionClosedOK, websockets.WebSocketException, OSError) as e:
+            logger.warning(f"З'єднання втрачено ({type(e).__name__}: {e}). Спроба перепідключення через 5 секунд...")
             await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"Непередбачена помилка: {e}. Перепідключення через 5 секунд...")

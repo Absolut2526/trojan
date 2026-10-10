@@ -103,11 +103,11 @@ async def websocket_client_endpoint(
                 await websocket.send_json({"type": "pong"})
 
     except WebSocketDisconnect:
-        manager.disconnect_client(pc_name)
+        manager.disconnect_client(pc_name, websocket)
         asyncio.create_task(notify_pc_status(pc_name, "offline"))
     except Exception as e:
         logger.error(f"WebSocket client error ({pc_name}): {e}")
-        manager.disconnect_client(pc_name)
+        manager.disconnect_client(pc_name, websocket)
         asyncio.create_task(notify_pc_status(pc_name, "offline"))
 
 # --- WebSocket for Dashboard ---

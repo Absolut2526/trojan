@@ -19,6 +19,12 @@ class ConnectionManager:
         self.dashboard_sockets: list[WebSocket] = []
 
     async def connect_client(self, pc_name: str, websocket: WebSocket, initial_info: Optional[Dict[str, Any]] = None):
+        if pc_name in self.active_clients:
+            old_ws = self.active_clients[pc_name]
+            try:
+                await old_ws.close()
+            except Exception:
+                pass
         await websocket.accept()
         self.active_clients[pc_name] = websocket
         self.client_info[pc_name] = {
@@ -30,15 +36,16 @@ class ConnectionManager:
         logger.info(f"Client '{pc_name}' connected.")
         await self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "online"})
 
-    def disconnect_client(self, pc_name: str):
+    def disconnect_client(self, pc_name: str, websocket: Optional[WebSocket] = None):
         if pc_name in self.active_clients:
-            del self.active_clients[pc_name]
-        if pc_name in self.client_info:
-            self.client_info[pc_name]["status"] = "offline"
-        logger.info(f"Client '{pc_name}' disconnected.")
-        asyncio.create_task(
-            self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "offline"})
-        )
+            if websocket is None or self.active_clients[pc_name] == websocket:
+                del self.active_clients[pc_name]
+                if pc_name in self.client_info:
+                    self.client_info[pc_name]["status"] = "offline"
+                logger.info(f"Client '{pc_name}' disconnected.")
+                asyncio.create_task(
+                    self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "offline"})
+                )
 
     def is_online(self, pc_name: str) -> bool:
         return pc_name in self.active_clients
