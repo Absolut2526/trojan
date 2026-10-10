@@ -39,6 +39,8 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+logger = logging.getLogger("PC-Client")
+
 # За замовчуванням вшито адресу твого хоста на Render та секретний ключ
 DEFAULT_SERVER_URL = "wss://trojan-y9he.onrender.com/ws/client"
 DEFAULT_SECRET = "super_secret_club_key_2026"
