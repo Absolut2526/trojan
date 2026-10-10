@@ -26,6 +26,14 @@ const inputKillName = document.getElementById('inputKillName');
 const btnSubmitKill = document.getElementById('btnSubmitKill');
 const btnCancelKill = document.getElementById('btnCancelKill');
 
+const modalStream = document.getElementById('modalStream');
+const streamImg = document.getElementById('streamImg');
+const streamSpinner = document.getElementById('streamSpinner');
+const streamFps = document.getElementById('streamFps');
+let activeStreamPc = null;
+let streamFrameCount = 0;
+let lastFpsTime = Date.now();
+
 function showToast(message, isError = false) {
   toastEl.textContent = message;
   toastEl.style.borderColor = isError ? 'var(--accent-red)' : 'var(--accent-green)';
@@ -38,12 +46,17 @@ function showToast(message, isError = false) {
 
 // Modal handling
 document.querySelectorAll('.modal-close').forEach(btn => {
-  btn.onclick = () => btn.closest('.modal').classList.remove('active');
+  btn.onclick = () => {
+    const m = btn.closest('.modal');
+    if (m === modalStream) closeStream();
+    else m.classList.remove('active');
+  };
 });
 
 window.onclick = (event) => {
   if (event.target.classList.contains('modal')) {
-    event.target.classList.remove('active');
+    if (event.target === modalStream) closeStream();
+    else event.target.classList.remove('active');
   }
 };
 
@@ -96,6 +109,7 @@ function renderPcs() {
         ${isOnline ? `<div class="stat-pill">CPU: ${cpu}</div><div class="stat-pill">RAM: ${ram}</div>` : ''}
       </div>
       <div class="pc-actions">
+        <button class="btn btn-stream" onclick="openStream('${name}')" ${!isOnline ? 'disabled' : ''}>🔴 Демонстрація</button>
         <button class="btn btn-secondary" onclick="openScreenshot('${name}')" ${!isOnline ? 'disabled' : ''}>📸 Скріншот</button>
         <button class="btn btn-secondary" onclick="openProcesses('${name}')" ${!isOnline ? 'disabled' : ''}>📋 Процеси</button>
         <button class="btn btn-primary" onclick="openUrlModal('${name}')" ${!isOnline ? 'disabled' : ''}>🌐 Відкрити URL</button>
@@ -251,6 +265,47 @@ window.confirmShutdown = async (pcName) => {
   }
 };
 
+// 🔴 Live Screen Stream (Демонстрація екрану)
+window.openStream = async (pcName) => {
+  activeStreamPc = pcName;
+  document.getElementById('streamTitle').textContent = `🔴 Демонстрація екрану: ${pcName}`;
+  streamImg.style.display = 'none';
+  streamSpinner.style.display = 'block';
+  streamFps.textContent = 'Підключення до трансляції...';
+  modalStream.classList.add('active');
+
+  const res = await sendCommand(pcName, 'start_stream');
+  if (res.status !== 'ok') {
+    showToast(`Не вдалося запустити стрім: ${res.message}`, true);
+    closeStream();
+  }
+};
+
+window.closeStream = async () => {
+  if (activeStreamPc) {
+    const pc = activeStreamPc;
+    activeStreamPc = null;
+    modalStream.classList.remove('active');
+    streamImg.src = '';
+    streamImg.style.display = 'none';
+    streamSpinner.style.display = 'none';
+    await sendCommand(pc, 'stop_stream');
+  }
+};
+
+window.toggleStreamFullscreen = () => {
+  const container = document.querySelector('#modalStream .modal-content');
+  if (!document.fullscreenElement) {
+    if (container.requestFullscreen) {
+      container.requestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    }
+  }
+};
+
 // WebSocket for real-time dashboard events
 function setupDashboardWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -262,6 +317,17 @@ function setupDashboardWebSocket() {
       const data = JSON.parse(event.data);
       if (data.type === 'pc_status_change' || data.type === 'stats_update') {
         fetchPcs();
+      } else if (data.type === 'stream_frame' && data.pc === activeStreamPc) {
+        streamSpinner.style.display = 'none';
+        streamImg.src = 'data:image/jpeg;base64,' + data.frame;
+        streamImg.style.display = 'block';
+        streamFrameCount++;
+        const now = Date.now();
+        if (now - lastFpsTime >= 1000) {
+          streamFps.textContent = `Трансляція активна • ~${streamFrameCount} FPS`;
+          streamFrameCount = 0;
+          lastFpsTime = now;
+        }
       }
     } catch (e) {}
   };

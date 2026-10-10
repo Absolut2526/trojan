@@ -49,6 +49,30 @@
     </div>
   </div>
 
+  <!-- Modal: Live Stream (Демонстрація) -->
+  <div id="modalStream" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h3 id="streamTitle">🔴 Демонстрація екрану</h3>
+          <span class="live-tag">LIVE</span>
+        </div>
+        <span class="modal-close" onclick="closeStream()">&times;</span>
+      </div>
+      <div class="modal-body text-center" style="background:#000;padding:10px;min-height:360px;display:flex;align-items:center;justify-content:center;">
+        <div id="streamSpinner" class="spinner"></div>
+        <img id="streamImg" src="" alt="Live Stream" style="max-width:100%;max-height:75vh;height:auto;border-radius:6px;display:none;" />
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <span id="streamFps" style="color:var(--text-muted);font-size:13px;">Підключення до трансляції...</span>
+        <div style="display:flex;gap:10px;">
+          <button id="btnStreamFullscreen" class="btn btn-secondary" onclick="toggleStreamFullscreen()">⛶ На весь екран</button>
+          <button class="btn btn-danger" onclick="closeStream()">Зупинити</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Processes -->
   <div id="modalProcesses" class="modal">
     <div class="modal-content modal-large">

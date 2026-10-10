@@ -90,6 +90,14 @@ async def websocket_client_endpoint(
                 manager.update_client_stats(pc_name, stats)
                 await manager.broadcast_to_dashboards({"type": "stats_update", "pc": pc_name, "stats": stats})
 
+            elif msg_type == "stream_frame":
+                # Forward live screen frame to dashboards
+                await manager.broadcast_to_dashboards({
+                    "type": "stream_frame",
+                    "pc": pc_name,
+                    "frame": data.get("frame")
+                })
+
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
 

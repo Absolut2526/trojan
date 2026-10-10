@@ -118,12 +118,52 @@ def execute_restart():
     else:
         os.system("shutdown -r now")
 
-async def execute_action(action: str, params: dict) -> dict:
+is_streaming = False
+stream_task = None
+
+async def stream_loop(websocket):
+    global is_streaming
+    logger.info("Початок трансляції екрану...")
+    while is_streaming:
+        try:
+            img = ImageGrab.grab()
+            # Масштабуємо кадр для плавної трансляції без навантаження на інтернет
+            if img.width > 1024:
+                ratio = 1024 / img.width
+                new_size = (1024, int(img.height * ratio))
+                img = img.resize(new_size)
+            
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=45, optimize=True)
+            b64_frame = base64.b64encode(buf.getvalue()).decode("utf-8")
+            
+            await websocket.send(json.dumps({
+                "type": "stream_frame",
+                "frame": b64_frame
+            }))
+            await asyncio.sleep(0.3)  # ~3 FPS
+        except Exception as e:
+            logger.warning(f"Помилка відправки кадру стріму: {e}")
+            await asyncio.sleep(0.5)
+    logger.info("Трансляцію екрану зупинено.")
+
+async def execute_action(action: str, params: dict, websocket=None) -> dict:
     """Обробляє команди з сервера."""
+    global is_streaming, stream_task
     try:
         if action == "screenshot":
             img_b64 = get_screenshot_base64()
             return {"status": "ok", "image_base64": img_b64}
+
+        elif action == "start_stream":
+            if not is_streaming and websocket:
+                is_streaming = True
+                stream_task = asyncio.create_task(stream_loop(websocket))
+            return {"status": "ok", "message": "Стрім запущено"}
+
+        elif action == "stop_stream":
+            is_streaming = False
+            return {"status": "ok", "message": "Стрім зупинено"}
 
         elif action == "open_url":
             url = params.get("url")
@@ -147,7 +187,6 @@ async def execute_action(action: str, params: dict) -> dict:
             return {"status": "ok", "processes": procs}
 
         elif action == "restart":
-            # Виконуємо з невеликою затримкою, щоб встигнути відповісти серверу
             asyncio.get_event_loop().call_later(1.0, execute_restart)
             return {"status": "ok", "message": "ПК перезавантажується..."}
 
@@ -177,6 +216,7 @@ async def heartbeat_sender(websocket):
             break
 
 async def run_client():
+    global is_streaming, stream_task
     cfg = load_or_create_config()
     server_base = cfg["server_url"].rstrip("/")
     secret = cfg["secret"]
@@ -190,7 +230,6 @@ async def run_client():
             async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as websocket:
                 logger.info(f"✅ Успішно підключено до сервера як {pc_name}!")
                 
-                # Запускаємо фонову відправку системної статистики
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
 
                 try:
@@ -202,7 +241,7 @@ async def run_client():
                             params = msg.get("params", {})
 
                             logger.info(f"Отримано команду: {action}")
-                            result = await execute_action(action, params)
+                            result = await execute_action(action, params, websocket=websocket)
 
                             # Відправляємо результат назад серверу
                             response_payload = {
@@ -215,6 +254,10 @@ async def run_client():
                             logger.warning(f"Невірний формат повідомлення: {message_str}")
                 finally:
                     heartbeat_task.cancel()
+                    if is_streaming:
+                        is_streaming = False
+                        if stream_task:
+                            stream_task.cancel()
 
         except (websockets.ConnectionClosedError, websockets.WebSocketException, OSError) as e:
             logger.warning(f"З'єднання втрачено: {e}. Спроба перепідключення через 5 секунд...")

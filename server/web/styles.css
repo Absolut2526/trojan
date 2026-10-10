@@ -200,11 +200,27 @@ body {
 }
 .btn-danger:hover:not(:disabled) { background: #b91c1c; }
 
-.btn-warning {
-  background: #d97706;
+.btn-stream {
+  background: #7c3aed;
   color: #fff;
 }
-.btn-warning:hover:not(:disabled) { background: #b45309; }
+.btn-stream:hover:not(:disabled) { background: #6d28d9; }
+
+.live-tag {
+  background: var(--accent-red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.8px;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 /* Modals */
 .modal {
