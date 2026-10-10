@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Керування ПК Клубом | Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">🎮</div>
+        <div>
+          <h1>PC CLUB MANAGER</h1>
+          <p class="subtitle">Центр керування та моніторингу комп'ютерів</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="stat-badge">
+          <span class="status-dot"></span>
+          <span id="statOnline">Онлайн: 0 / 0</span>
+        </div>
+        <button id="btnRefresh" class="btn btn-secondary">🔄 Оновити</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div id="pcGrid" class="pc-grid">
+        <div class="empty-state">Очікування підключення комп'ютерів клубу...</div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Screenshot -->
+  <div id="modalScreenshot" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h3 id="screenshotTitle">📸 Знімок екрану</h3>
+        <span class="modal-close">&times;</span>
+      </div>
+      <div class="modal-body text-center">
+        <div id="screenshotSpinner" class="spinner"></div>
+        <img id="screenshotImg" src="" alt="Screenshot" style="display:none;" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Processes -->
+  <div id="modalProcesses" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h3 id="procsTitle">📋 Запущені процеси</h3>
+        <span class="modal-close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="procsSpinner" class="spinner"></div>
+        <div id="procsContainer">
+          <table class="procs-table">
+            <thead>
+              <tr>
+                <th>Назва процесу</th>
+                <th>PID</th>
+                <th>Пам'ять (RAM)</th>
+                <th>CPU</th>
+                <th>Дія</th>
+              </tr>
+            </thead>
+            <tbody id="procsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Open URL -->
+  <div id="modalUrl" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="urlTitle">🌐 Відкрити посилання</h3>
+        <span class="modal-close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <label for="inputUrl">Введіть адресу сайту:</label>
+        <input type="url" id="inputUrl" placeholder="https://youtube.com" class="input-field" />
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelUrl" class="btn btn-secondary">Скасувати</button>
+        <button id="btnSubmitUrl" class="btn btn-primary">Відкрити</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Kill Process -->
+  <div id="modalKill" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="killTitle">❌ Закрити процес</h3>
+        <span class="modal-close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <label for="inputKillName">Назва процесу (наприклад, <code>dota2.exe</code>):</label>
+        <input type="text" id="inputKillName" placeholder="steam.exe" class="input-field" />
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelKill" class="btn btn-secondary">Скасувати</button>
+        <button id="btnSubmitKill" class="btn btn-danger">Завершити процес</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

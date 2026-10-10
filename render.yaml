@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pc-club-manager
+    env: python
+    buildCommand: "pip install -r server/requirements.txt"
+    startCommand: "python -m uvicorn server.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: CLIENT_SECRET
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.11.8

@@ -1,0 +1,5 @@
+{
+    "server_url": "wss://your-app-name.onrender.com/ws/client",
+    "secret": "super_secret_club_key_2026",
+    "pc_name": "PC-01"
+}
