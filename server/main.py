@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Ensure server directory is in sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
