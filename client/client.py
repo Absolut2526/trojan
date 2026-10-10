@@ -12,7 +12,13 @@ from typing import Any, Dict
 
 import psutil
 import websockets
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
+
+try:
+    import mss
+    HAS_MSS = True
+except ImportError:
+    HAS_MSS = False
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -121,30 +127,43 @@ def execute_restart():
 is_streaming = False
 stream_task = None
 
-async def stream_loop(websocket):
+async def stream_loop(websocket, target_fps=12):
     global is_streaming
-    logger.info("Початок трансляції екрану...")
-    while is_streaming:
-        try:
-            img = ImageGrab.grab()
-            # Масштабуємо кадр для плавної трансляції без навантаження на інтернет
-            if img.width > 1024:
-                ratio = 1024 / img.width
-                new_size = (1024, int(img.height * ratio))
-                img = img.resize(new_size)
-            
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=45, optimize=True)
-            b64_frame = base64.b64encode(buf.getvalue()).decode("utf-8")
-            
-            await websocket.send(json.dumps({
-                "type": "stream_frame",
-                "frame": b64_frame
-            }))
-            await asyncio.sleep(0.3)  # ~3 FPS
-        except Exception as e:
-            logger.warning(f"Помилка відправки кадру стріму: {e}")
-            await asyncio.sleep(0.5)
+    logger.info(f"Початок трансляції екрану ({target_fps} FPS)...")
+    delay = max(0.04, 1.0 / target_fps)
+    
+    sct = mss.mss() if HAS_MSS else None
+    try:
+        while is_streaming:
+            try:
+                if sct:
+                    monitor = sct.monitors[1]  # primary screen
+                    sct_img = sct.grab(monitor)
+                    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                else:
+                    img = ImageGrab.grab()
+
+                # Масштабуємо кадр для плавного стріму без зависань (960px ширина)
+                if img.width > 960:
+                    ratio = 960 / img.width
+                    new_size = (960, int(img.height * ratio))
+                    img = img.resize(new_size, Image.Resampling.BILINEAR)
+
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, format="JPEG", quality=45, optimize=False)
+                b64_frame = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+                await websocket.send(json.dumps({
+                    "type": "stream_frame",
+                    "frame": b64_frame
+                }))
+                await asyncio.sleep(delay)
+            except Exception as e:
+                logger.warning(f"Помилка відправки кадру стріму: {e}")
+                await asyncio.sleep(0.15)
+    finally:
+        if sct:
+            sct.close()
     logger.info("Трансляцію екрану зупинено.")
 
 async def execute_action(action: str, params: dict, websocket=None) -> dict:
@@ -156,10 +175,11 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
             return {"status": "ok", "image_base64": img_b64}
 
         elif action == "start_stream":
+            fps = int(params.get("fps", 12))
             if not is_streaming and websocket:
                 is_streaming = True
-                stream_task = asyncio.create_task(stream_loop(websocket))
-            return {"status": "ok", "message": "Стрім запущено"}
+                stream_task = asyncio.create_task(stream_loop(websocket, target_fps=fps))
+            return {"status": "ok", "message": f"Стрім запущено ({fps} FPS)"}
 
         elif action == "stop_stream":
             is_streaming = False

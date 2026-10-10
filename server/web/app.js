@@ -265,6 +265,21 @@ window.confirmShutdown = async (pcName) => {
   }
 };
 
+let currentFps = 12;
+
+window.changeStreamFps = async (fps) => {
+  currentFps = fps;
+  ['fps5', 'fps12', 'fps20'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.className = (id === `fps${fps}`) ? 'btn btn-primary' : 'btn btn-secondary';
+  });
+
+  if (activeStreamPc) {
+    showToast(`Перемикання на ${fps} FPS...`);
+    await sendCommand(activeStreamPc, 'start_stream', { fps: currentFps });
+  }
+};
+
 // 🔴 Live Screen Stream (Демонстрація екрану)
 window.openStream = async (pcName) => {
   activeStreamPc = pcName;
@@ -274,7 +289,7 @@ window.openStream = async (pcName) => {
   streamFps.textContent = 'Підключення до трансляції...';
   modalStream.classList.add('active');
 
-  const res = await sendCommand(pcName, 'start_stream');
+  const res = await sendCommand(pcName, 'start_stream', { fps: currentFps });
   if (res.status !== 'ok') {
     showToast(`Не вдалося запустити стрім: ${res.message}`, true);
     closeStream();
