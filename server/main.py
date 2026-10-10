@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from config import config
 from connection_manager import manager
-from bot import get_bot_instance, dp
+from bot import get_bot_instance, dp, notify_pc_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ async def websocket_client_endpoint(
         return
 
     await manager.connect_client(pc_name, websocket)
+    asyncio.create_task(notify_pc_status(pc_name, "online"))
 
     try:
         while True:
@@ -103,9 +104,11 @@ async def websocket_client_endpoint(
 
     except WebSocketDisconnect:
         manager.disconnect_client(pc_name)
+        asyncio.create_task(notify_pc_status(pc_name, "offline"))
     except Exception as e:
         logger.error(f"WebSocket client error ({pc_name}): {e}")
         manager.disconnect_client(pc_name)
+        asyncio.create_task(notify_pc_status(pc_name, "offline"))
 
 # --- WebSocket for Dashboard ---
 @app.websocket("/ws/dashboard")

@@ -514,3 +514,31 @@ def get_bot_instance() -> Optional[Bot]:
     if config.BOT_TOKEN and bot is None:
         bot = Bot(token=config.BOT_TOKEN)
     return bot
+
+async def notify_pc_status(pc_name: str, event: str):
+    """
+    Надсилає сповіщення в дозволені чати/групи, коли ПК запускається або вимикається.
+    event: 'online' | 'offline'
+    """
+    bot_inst = get_bot_instance()
+    if not bot_inst:
+        return
+
+    target_chats = set(config.ALLOWED_CHAT_IDS + config.ADMIN_IDS)
+    if not target_chats:
+        return
+
+    if event == "online":
+        icon = "🟢"
+        title = "Комп'ютер запущено / онлайн"
+    else:
+        icon = "🔴"
+        title = "Комп'ютер відключено / офлайн"
+
+    text = f"{icon} <b>[{pc_name}] {title}</b>"
+
+    for chat_id in target_chats:
+        try:
+            await bot_inst.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Не вдалося надіслати сповіщення в чат {chat_id}: {e}")
