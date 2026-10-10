@@ -53,6 +53,18 @@ class ConnectionManager:
             }
         return result
 
+    async def send_broadcast_command(self, action: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Sends command to ALL currently online clients simultaneously.
+        """
+        online_pcs = list(self.active_clients.keys())
+        if not online_pcs:
+            return {"status": "error", "message": "Немає підключених комп'ютерів."}
+
+        tasks = [self.send_command(pc, action, params) for pc in online_pcs]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return {"status": "ok", "count": len(online_pcs), "pcs": online_pcs}
+
     async def send_command(self, pc_name: str, action: str, params: Optional[Dict[str, Any]] = None, timeout: float = 15.0) -> Dict[str, Any]:
         """
         Sends command to client and waits for response via correlation request_id.

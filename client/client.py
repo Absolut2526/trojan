@@ -7,6 +7,8 @@ import os
 import platform
 import socket
 import sys
+import threading
+import urllib.request
 import webbrowser
 from typing import Any, Dict
 
@@ -124,6 +126,41 @@ def execute_restart():
     else:
         os.system("shutdown -r now")
 
+def show_fullscreen_image(img_bytes: bytes, duration: float):
+    """Показує картинку на весь екран поверх усіх вікон на задану кількість секунд."""
+    def _worker():
+        try:
+            import tkinter as tk
+            from PIL import ImageTk
+            root = tk.Tk()
+            root.attributes('-fullscreen', True)
+            root.attributes('-topmost', True)
+            root.config(cursor="none")
+            root.bind('<Escape>', lambda e: root.destroy())
+
+            screen_w = root.winfo_screenwidth()
+            screen_h = root.winfo_screenheight()
+
+            pil_img = Image.open(io.BytesIO(img_bytes))
+            pil_img.thumbnail((screen_w, screen_h), Image.Resampling.LANCZOS)
+
+            bg_img = Image.new("RGB", (screen_w, screen_h), "black")
+            offset_x = (screen_w - pil_img.width) // 2
+            offset_y = (screen_h - pil_img.height) // 2
+            bg_img.paste(pil_img, (offset_x, offset_y))
+
+            tk_img = ImageTk.PhotoImage(bg_img)
+            lbl = tk.Label(root, image=tk_img, bg="black")
+            lbl.image = tk_img
+            lbl.pack(fill="both", expand=True)
+
+            root.after(int(duration * 1000), root.destroy)
+            root.mainloop()
+        except Exception as e:
+            logger.error(f"Помилка показу картинки на весь екран: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 is_streaming = False
 stream_task = None
 
@@ -180,6 +217,26 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
                 is_streaming = True
                 stream_task = asyncio.create_task(stream_loop(websocket, target_fps=fps))
             return {"status": "ok", "message": f"Стрім запущено ({fps} FPS)"}
+
+        elif action == "show_image":
+            image_url = params.get("image_url")
+            image_b64 = params.get("image_base64")
+            duration = float(params.get("duration", 10))
+
+            try:
+                if image_b64:
+                    img_data = base64.b64decode(image_b64)
+                elif image_url:
+                    req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        img_data = resp.read()
+                else:
+                    return {"status": "error", "message": "Не вказано картинку (image_url або image_base64)"}
+
+                show_fullscreen_image(img_data, duration)
+                return {"status": "ok", "message": f"Картинку виведено на весь екран на {duration} сек."}
+            except Exception as ex:
+                return {"status": "error", "message": f"Помилка завантаження картинки: {ex}"}
 
         elif action == "stop_stream":
             is_streaming = False

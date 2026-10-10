@@ -128,6 +128,11 @@ class CommandRequest(BaseModel):
     action: str
     params: Dict[str, Any] = {}
 
+@app.post("/api/pcs/broadcast/command")
+async def api_broadcast_command(req: CommandRequest):
+    result = await manager.send_broadcast_command(req.action, req.params)
+    return result
+
 @app.post("/api/pcs/{pc_name}/command")
 async def api_send_command(pc_name: str, req: CommandRequest):
     if not manager.is_online(pc_name):

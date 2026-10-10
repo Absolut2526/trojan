@@ -50,6 +50,10 @@ def get_pc_list_keyboard() -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
 
+    buttons.append([
+        InlineKeyboardButton(text="🔄 Рестарт ВСІХ", callback_data="mass:restart_confirm"),
+        InlineKeyboardButton(text="⏻ Вимкнути ВСІ", callback_data="mass:shutdown_confirm")
+    ])
     buttons.append([InlineKeyboardButton(text="🔄 Оновити список", callback_data="refresh_list")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -66,13 +70,14 @@ def get_pc_actions_keyboard(pc_name: str, is_online: bool) -> InlineKeyboardMark
         ],
         [
             InlineKeyboardButton(text="🌐 Відкрити URL", callback_data=f"act:open_url:{pc_name}"),
-            InlineKeyboardButton(text="❌ Закрити процес", callback_data=f"act:kill_proc:{pc_name}")
+            InlineKeyboardButton(text="🖼 Картинка", callback_data=f"act:pic_prompt:{pc_name}")
         ],
         [
-            InlineKeyboardButton(text="🔄 Перезавантажити", callback_data=f"act:restart_confirm:{pc_name}"),
-            InlineKeyboardButton(text="⏻ Вимкнути", callback_data=f"act:shutdown_confirm:{pc_name}")
+            InlineKeyboardButton(text="❌ Закрити процес", callback_data=f"act:kill_proc:{pc_name}"),
+            InlineKeyboardButton(text="🔄 Перезавантажити", callback_data=f"act:restart_confirm:{pc_name}")
         ],
         [
+            InlineKeyboardButton(text="⏻ Вимкнути", callback_data=f"act:shutdown_confirm:{pc_name}"),
             InlineKeyboardButton(text="🔙 До списку ПК", callback_data="back_to_list")
         ]
     ]
@@ -384,17 +389,125 @@ async def cb_shutdown_confirm(callback: types.CallbackQuery):
     await callback.message.edit_text(f"⚠️ Ви дійсно бажаєте <b>повністю вимкнути {pc_name}</b>?", parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("act:do_shutdown:"))
-async def cb_do_shutdown(callback: types.CallbackQuery):
-    if not is_authorized(callback):
+# --- Показ картинки на весь екран (/pic PC-01 url sec або фото з підписом) ---
+@dp.message(Command("pic"))
+async def cmd_quick_pic(message: types.Message, command: CommandObject):
+    if not is_authorized(message):
         return
-    pc_name = callback.data.split(":")[2]
-    await callback.answer("Надсилаю команду вимкнення...")
-    resp = await manager.send_command(pc_name, "shutdown", timeout=6.0)
-    if resp.get("status") == "ok":
-        await callback.message.edit_text(f"⏻ Комп'ютер <b>{pc_name}</b> вимикається.", parse_mode="HTML")
+    args = (command.args or "").strip().split(maxsplit=2)
+    if len(args) < 2:
+        await message.reply("⚠️ Формат: <code>/pic PC-01 https://посилання.jpg 10</code>\n(або <code>/pic ALL https://... 10</code> для всіх ПК)", parse_mode="HTML")
+        return
+
+    target = args[0]
+    img_url = args[1]
+    duration = float(args[2]) if len(args) > 2 and args[2].isdigit() else 10.0
+
+    msg = await message.reply(f"⏳ Відправляю картинку на <b>{target}</b> ({duration}с)...", parse_mode="HTML")
+    params = {"image_url": img_url, "duration": duration}
+
+    if target.upper() == "ALL":
+        resp = await manager.send_broadcast_command("show_image", params)
+        await msg.edit_text(f"🖼 Картинку надіслано на <b>ВСІ ПК</b> ({resp.get('count', 0)} комп'ютерів) на {duration} сек.", parse_mode="HTML")
     else:
-        await callback.message.edit_text(f"❌ Помилка: {resp.get('message')}")
+        resp = await manager.send_command(target, "show_image", params, timeout=10.0)
+        if resp.get("status") == "ok":
+            await msg.edit_text(f"✅ Картинку відкрито на <b>{target}</b> на {duration} сек.", parse_mode="HTML")
+        else:
+            await msg.edit_text(f"❌ Помилка: {resp.get('message')}")
+
+@dp.message(F.photo)
+async def handle_photo_with_caption(message: types.Message):
+    if not is_authorized(message):
+        return
+    caption = (message.caption or "").strip()
+    if not caption.startswith("/pic"):
+        return
+
+    parts = caption.split()
+    target = parts[1] if len(parts) > 1 else "ALL"
+    duration = float(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 10.0
+
+    msg = await message.reply(f"⏳ Завантажую фото та надсилаю на <b>{target}</b>...", parse_mode="HTML")
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    photo_bytes_io = io.BytesIO()
+    await message.bot.download_file(file.file_path, destination=photo_bytes_io)
+    b64_img = base64.b64encode(photo_bytes_io.getvalue()).decode("utf-8")
+
+    params = {"image_base64": b64_img, "duration": duration}
+    if target.upper() == "ALL":
+        resp = await manager.send_broadcast_command("show_image", params)
+        await msg.edit_text(f"🖼 Фото виведено на весь екран на <b>ВСІ ПК</b> ({resp.get('count', 0)} комп'ютерів) на {duration} сек.", parse_mode="HTML")
+    else:
+        resp = await manager.send_command(target, "show_image", params, timeout=10.0)
+        if resp.get("status") == "ok":
+            await msg.edit_text(f"✅ Фото відкрито на <b>{target}</b> на {duration} сек.", parse_mode="HTML")
+        else:
+            await msg.edit_text(f"❌ Помилка: {resp.get('message')}")
+
+# --- Масові команди (/shutdown_all, /restart_all) ---
+@dp.message(Command("shutdown_all"))
+async def cmd_shutdown_all(message: types.Message):
+    if not is_authorized(message):
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ ТАК, ВИМКНУТИ ВСІ ПК", callback_data="mass:do_shutdown"),
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="back_to_list")
+        ]
+    ])
+    await message.answer("⚠️ <b>УВАГА!</b> Ви дійсно бажаєте вимкнути <b>ВСІ комп'ютери клубу</b>?", parse_mode="HTML", reply_markup=kb)
+
+@dp.message(Command("restart_all"))
+async def cmd_restart_all(message: types.Message):
+    if not is_authorized(message):
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 ТАК, ПЕРЕЗАВАНТАЖИТИ ВСІ", callback_data="mass:do_restart"),
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="back_to_list")
+        ]
+    ])
+    await message.answer("⚠️ <b>УВАГА!</b> Перезавантажити <b>ВСІ комп'ютери клубу</b>?", parse_mode="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "mass:shutdown_confirm")
+async def cb_mass_shutdown_confirm(callback: types.CallbackQuery):
+    if not is_authorized(callback): return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ ТАК, ВИМКНУТИ ВСІ ПК", callback_data="mass:do_shutdown"),
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="back_to_list")
+        ]
+    ])
+    await callback.message.edit_text("⚠️ <b>УВАГА!</b> Ви дійсно бажаєте вимкнути <b>ВСІ комп'ютери клубу</b>?", parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "mass:do_shutdown")
+async def cb_mass_do_shutdown(callback: types.CallbackQuery):
+    if not is_authorized(callback): return
+    await callback.answer("Вимикаю всі ПК...")
+    resp = await manager.send_broadcast_command("shutdown")
+    await callback.message.edit_text(f"⏻ Команду вимкнення надіслано на <b>{resp.get('count', 0)} комп'ютерів</b>.", parse_mode="HTML")
+
+@dp.callback_query(F.data == "mass:restart_confirm")
+async def cb_mass_restart_confirm(callback: types.CallbackQuery):
+    if not is_authorized(callback): return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 ТАК, ПЕРЕЗАВАНТАЖИТИ ВСІ", callback_data="mass:do_restart"),
+            InlineKeyboardButton(text="❌ Скасувати", callback_data="back_to_list")
+        ]
+    ])
+    await callback.message.edit_text("⚠️ <b>УВАГА!</b> Перезавантажити <b>ВСІ комп'ютери клубу</b>?", parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "mass:do_restart")
+async def cb_mass_do_restart(callback: types.CallbackQuery):
+    if not is_authorized(callback): return
+    await callback.answer("Перезавантажую всі ПК...")
+    resp = await manager.send_broadcast_command("restart")
+    await callback.message.edit_text(f"🔄 Команду перезавантаження надіслано на <b>{resp.get('count', 0)} комп'ютерів</b>.", parse_mode="HTML")
 
 def get_bot_instance() -> Optional[Bot]:
     global bot

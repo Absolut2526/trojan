@@ -113,6 +113,7 @@ function renderPcs() {
         <button class="btn btn-secondary" onclick="openScreenshot('${name}')" ${!isOnline ? 'disabled' : ''}>📸 Скріншот</button>
         <button class="btn btn-secondary" onclick="openProcesses('${name}')" ${!isOnline ? 'disabled' : ''}>📋 Процеси</button>
         <button class="btn btn-primary" onclick="openUrlModal('${name}')" ${!isOnline ? 'disabled' : ''}>🌐 Відкрити URL</button>
+        <button class="btn btn-secondary" onclick="openPicModal('${name}')" ${!isOnline ? 'disabled' : ''}>🖼 Картинка</button>
         <button class="btn btn-warning" onclick="openKillModal('${name}')" ${!isOnline ? 'disabled' : ''}>❌ Закрити процес</button>
         <button class="btn btn-secondary" onclick="confirmRestart('${name}')" ${!isOnline ? 'disabled' : ''}>🔄 Рестарт</button>
         <button class="btn btn-danger" onclick="confirmShutdown('${name}')" ${!isOnline ? 'disabled' : ''}>⏻ Вимкнути</button>
@@ -128,6 +129,20 @@ function renderPcs() {
 async function sendCommand(pcName, action, params = {}) {
   try {
     const res = await fetch(`/api/pcs/${encodeURIComponent(pcName)}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, params })
+    });
+    return await res.json();
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+}
+
+// Broadcast API Command sender
+async function sendBroadcastCommand(action, params = {}) {
+  try {
+    const res = await fetch('/api/pcs/broadcast/command', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, params })
@@ -262,6 +277,78 @@ window.confirmShutdown = async (pcName) => {
     showToast(`Команда вимкнення надіслана на ${pcName}`);
     const res = await sendCommand(pcName, 'shutdown');
     if (res.status !== 'ok') showToast(res.message, true);
+  }
+};
+
+// 🖼 Fullscreen Image Modal
+const modalPic = document.getElementById('modalPic');
+const inputPicUrl = document.getElementById('inputPicUrl');
+const inputPicDuration = document.getElementById('inputPicDuration');
+const btnCancelPic = document.getElementById('btnCancelPic');
+const btnSubmitPic = document.getElementById('btnSubmitPic');
+
+window.openPicModal = (pcName) => {
+  currentTargetPc = pcName;
+  document.getElementById('picTitle').textContent = pcName === 'ALL' 
+    ? '🖼 Показати картинку на ВСІ комп\'ютери' 
+    : `🖼 Показати картинку: ${pcName}`;
+  inputPicUrl.value = '';
+  inputPicDuration.value = '10';
+  modalPic.classList.add('active');
+  inputPicUrl.focus();
+};
+
+btnCancelPic.onclick = () => modalPic.classList.remove('active');
+btnSubmitPic.onclick = async () => {
+  const url = inputPicUrl.value.trim();
+  const duration = parseFloat(inputPicDuration.value) || 10;
+  if (!url) {
+    showToast('Введіть посилання на картинку!', true);
+    return;
+  }
+  modalPic.classList.remove('active');
+
+  if (currentTargetPc === 'ALL') {
+    showToast(`Відправляю картинку на ВСІ ПК (${duration}с)...`);
+    const res = await sendBroadcastCommand('show_image', { image_url: url, duration });
+    if (res.status === 'ok') {
+      showToast(`Картинку виведено на ${res.count || 0} ПК!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
+  } else {
+    showToast(`Відправляю картинку на ${currentTargetPc} (${duration}с)...`);
+    const res = await sendCommand(currentTargetPc, 'show_image', { image_url: url, duration });
+    if (res.status === 'ok') {
+      showToast(`Картинку відкрито на ${currentTargetPc}!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
+  }
+};
+
+// ⚡ Broadcast Commands
+window.broadcastRestart = async () => {
+  if (confirm('⚠️ УВАГА! Ви дійсно бажаєте ПЕРЕЗАВАНТАЖИТИ ВСІ комп\'ютери клубу?')) {
+    showToast('Відправляю команду перезавантаження на всі ПК...');
+    const res = await sendBroadcastCommand('restart');
+    if (res.status === 'ok') {
+      showToast(`Команду перезавантаження надіслано на ${res.count || 0} ПК!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
+  }
+};
+
+window.broadcastShutdown = async () => {
+  if (confirm('⚠️ УВАГА! Ви дійсно бажаєте ПОВНІСТЮ ВИМКНУТИ ВСІ комп\'ютери клубу?')) {
+    showToast('Відправляю команду вимкнення на всі ПК...');
+    const res = await sendBroadcastCommand('shutdown');
+    if (res.status === 'ok') {
+      showToast(`Команду вимкнення надіслано на ${res.count || 0} ПК!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
   }
 };
 
