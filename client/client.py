@@ -132,6 +132,18 @@ def show_fullscreen_image(img_bytes: bytes, duration: float):
         try:
             import tkinter as tk
             from PIL import ImageTk
+
+            # Перевіряємо чи байти не порожні і не HTML сторінка
+            if not img_bytes or len(img_bytes) < 32:
+                logger.error("Отримано порожні або занадто малі дані замість картинки")
+                return
+
+            if img_bytes[:15].lower().startswith(b"<!doctype") or img_bytes[:6].lower().startswith(b"<html"):
+                logger.error("Замість файлу картинки отримано HTML-сторінку сайту (можливо захист сайту або 404)")
+                return
+
+            pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
             root = tk.Tk()
             root.attributes('-fullscreen', True)
             root.attributes('-topmost', True)
@@ -141,7 +153,6 @@ def show_fullscreen_image(img_bytes: bytes, duration: float):
             screen_w = root.winfo_screenwidth()
             screen_h = root.winfo_screenheight()
 
-            pil_img = Image.open(io.BytesIO(img_bytes))
             pil_img.thumbnail((screen_w, screen_h), Image.Resampling.LANCZOS)
 
             bg_img = Image.new("RGB", (screen_w, screen_h), "black")
@@ -227,8 +238,12 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
                 if image_b64:
                     img_data = base64.b64decode(image_b64)
                 elif image_url:
-                    req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, timeout=12) as resp:
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+                    }
+                    req = urllib.request.Request(image_url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=15) as resp:
                         img_data = resp.read()
                 else:
                     return {"status": "error", "message": "Не вказано картинку (image_url або image_base64)"}
@@ -236,6 +251,7 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
                 show_fullscreen_image(img_data, duration)
                 return {"status": "ok", "message": f"Картинку виведено на весь екран на {duration} сек."}
             except Exception as ex:
+                logger.error(f"Помилка завантаження зображення: {ex}")
                 return {"status": "error", "message": f"Помилка завантаження картинки: {ex}"}
 
         elif action == "stop_stream":
