@@ -219,8 +219,10 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
             return {"status": "ok", "image_base64": get_screenshot_base64()}
 
         elif action == "start_stream":
-            fps = int(params.get("fps", 12))
-            if not is_streaming and websocket:
+            fps = int(params.get("fps", 8))
+            if is_streaming and stream_task and not stream_task.done():
+                return {"status": "ok", "message": f"Стрім вже активний ({fps} FPS)"}
+            if websocket:
                 is_streaming = True
                 stream_task = asyncio.create_task(stream_loop(websocket, target_fps=fps))
             return {"status": "ok", "message": f"Стрім запущено ({fps} FPS)"}
@@ -318,6 +320,9 @@ async def run_client():
             ) as websocket:
                 logger.info("✅ Успішно підключено до сервера!")
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
+                if not is_streaming:
+                    is_streaming = True
+                    stream_task = asyncio.create_task(stream_loop(websocket, target_fps=8))
 
                 try:
                     async for message_str in websocket:

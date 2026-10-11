@@ -91,43 +91,62 @@ body {
 
 .pc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 22px;
 }
 
 .pc-card {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-color);
-  padding: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
-.pc-card:hover {
+.pc-card.pc-card-online {
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.pc-card.pc-card-online:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  border-color: rgba(56, 189, 248, 0.5);
 }
 
 .pc-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pc-title-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .pc-name {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
 }
 
 .pc-badge {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 12px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
   font-weight: 600;
   text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .badge-online {
@@ -144,23 +163,229 @@ body {
 
 .pc-stats {
   display: flex;
-  gap: 12px;
-  margin-bottom: 18px;
-  font-size: 13px;
-  color: var(--text-muted);
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .stat-pill {
   background: #0f172a;
-  padding: 4px 10px;
+  padding: 3px 8px;
   border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+/* Кнопки керування (розташовані над демонстрацією) */
 .pc-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: auto;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.btn-action {
+  padding: 7px 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #334155;
+  color: #f1f5f9;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-action:hover:not(:disabled) {
+  background: #475569;
+  transform: translateY(-1px);
+}
+
+.btn-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-action-fullscreen {
+  background: rgba(37, 99, 235, 0.25);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #60a5fa;
+}
+.btn-action-fullscreen:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.45);
+}
+
+.btn-action-kill {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+.btn-action-kill:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.btn-action-restart {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fcd34d;
+}
+.btn-action-restart:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+.btn-action-shutdown {
+  background: rgba(220, 38, 38, 0.25);
+  border-color: rgba(220, 38, 38, 0.45);
+  color: #f87171;
+}
+.btn-action-shutdown:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.45);
+}
+
+/* Контейнер трансляції екрану */
+.pc-screen-wrapper {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 180px;
+  background: #000000;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8);
+  user-select: none;
+}
+
+.pc-screen-wrapper.clickable {
+  cursor: pointer;
+}
+
+.pc-stream-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
+
+.screen-live-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(220, 38, 38, 0.85);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 5;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  animation: pulse 1.2s infinite;
+}
+
+.screen-loading {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  z-index: 2;
+}
+
+.spinner-small {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.screen-overlay-expand {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.pc-screen-wrapper:hover .screen-overlay-expand {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.screen-offline-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  gap: 6px;
+  padding: 20px;
+  text-align: center;
+}
+
+.screen-offline-icon {
+  font-size: 32px;
+  margin-bottom: 4px;
+  opacity: 0.6;
+}
+
+.screen-offline-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.screen-offline-sub {
+  font-size: 11px;
+  color: #64748b;
+}
+
+@media (max-width: 640px) {
+  .pc-actions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .pc-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .btn {

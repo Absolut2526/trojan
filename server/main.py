@@ -85,6 +85,8 @@ async def websocket_client_endpoint(
     # Повідомляємо клієнту його офіційне ім'я
     await websocket.send_json({"type": "assigned_name", "pc_name": pc_name})
     asyncio.create_task(notify_pc_status(pc_name, "online"))
+    # Автоматично запускаємо трансляцію екрану при підключенні ПК
+    asyncio.create_task(manager.send_command(pc_name, "start_stream", {"fps": 8}))
 
     try:
         while True:
@@ -124,6 +126,9 @@ async def websocket_client_endpoint(
 @app.websocket("/ws/dashboard")
 async def websocket_dashboard_endpoint(websocket: WebSocket):
     await manager.connect_dashboard(websocket)
+    # При підключенні дашборду гарантуємо, що всі онлайн ПК транслюють екран
+    for active_pc in list(manager.active_clients.keys()):
+        asyncio.create_task(manager.send_command(active_pc, "start_stream", {"fps": 8}))
     try:
         while True:
             await websocket.receive_text()

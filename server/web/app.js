@@ -72,6 +72,73 @@ async function fetchPcs() {
   }
 }
 
+function buildCardHtml(name, isOnline, osName, cpu, ram) {
+  return `
+    <div class="pc-card-header">
+      <div class="pc-title-box">
+        <div class="pc-name">🖥 ${name}</div>
+        <div class="pc-badge ${isOnline ? 'badge-online' : 'badge-offline'}" id="badge-${name}">
+          ${isOnline ? '<span class="status-dot"></span> Онлайн' : 'Офлайн'}
+        </div>
+      </div>
+      <div class="pc-stats" id="stats-${name}">
+        <span class="stat-pill">ОС: ${osName}</span>
+        ${isOnline ? `<span class="stat-pill">CPU: ${cpu}</span><span class="stat-pill">RAM: ${ram}</span>` : ''}
+      </div>
+    </div>
+
+    <!-- КНОПКИ КЕРУВАННЯ (ЗВЕРХУ НАД ДЕМОНСТРАЦІЄЮ) -->
+    <div class="pc-actions" id="actions-${name}">
+      <button class="btn-action" onclick="openScreenshot('${name}')" ${!isOnline ? 'disabled' : ''} title="Знімок екрану">📸 Скрін</button>
+      <button class="btn-action" onclick="openProcesses('${name}')" ${!isOnline ? 'disabled' : ''} title="Список процесів">📋 Процеси</button>
+      <button class="btn-action" onclick="openUrlModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Відкрити посилання">🌐 URL</button>
+      <button class="btn-action" onclick="openPicModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Картинка на весь екран">🖼 Картинка</button>
+      <button class="btn-action btn-action-kill" onclick="openKillModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Закрити процес">❌ Процес</button>
+      <button class="btn-action btn-action-fullscreen" onclick="openStream('${name}')" ${!isOnline ? 'disabled' : ''} title="Розгорнути на весь екран">⛶ Екран</button>
+      <button class="btn-action btn-action-restart" onclick="confirmRestart('${name}')" ${!isOnline ? 'disabled' : ''} title="Перезавантажити ПК">🔄 Рестарт</button>
+      <button class="btn-action btn-action-shutdown" onclick="confirmShutdown('${name}')" ${!isOnline ? 'disabled' : ''} title="Вимкнути ПК">⏻ Вимкнути</button>
+    </div>
+
+    <!-- ДЕМОНСТРАЦІЯ ЕКРАНУ (ПІД КНОПКАМИ КЕРУВАННЯ) -->
+    <div class="pc-screen-wrapper ${isOnline ? 'clickable' : ''}" id="screen-wrapper-${name}" onclick="${isOnline ? `openStream('${name}')` : ''}" title="${isOnline ? 'Натисніть для збільшення трансляції' : ''}">
+      ${isOnline ? `
+        <div class="screen-live-badge"><span class="live-dot"></span> LIVE</div>
+        <div class="screen-loading" id="loader-${name}">
+          <div class="spinner-small"></div>
+          <span>Очікування трансляції...</span>
+        </div>
+        <img id="stream-img-${name}" class="pc-stream-image" src="" alt="Трансляція ${name}" style="display:none;" />
+        <div class="screen-overlay-expand">⛶ Розгорнути</div>
+      ` : `
+        <div class="screen-offline-placeholder">
+          <div class="screen-offline-icon">🔌</div>
+          <div class="screen-offline-title">Комп'ютер вимкнений</div>
+          <div class="screen-offline-sub">Немає трансляції</div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function updateCard(card, name, isOnline, osName, cpu, ram) {
+  const wasOnline = card.classList.contains('pc-card-online');
+  if (wasOnline !== isOnline) {
+    // Статус змінився — оновлюємо верстку для показу трансляції або офлайн заглушки
+    card.className = `pc-card ${isOnline ? 'pc-card-online' : 'pc-card-offline'}`;
+    card.innerHTML = buildCardHtml(name, isOnline, osName, cpu, ram);
+    return;
+  }
+
+  // Статус той самий — оновлюємо тільки показники статистики без перезавантаження трансляції
+  const statsEl = document.getElementById(`stats-${name}`);
+  if (statsEl) {
+    statsEl.innerHTML = `
+      <span class="stat-pill">ОС: ${osName}</span>
+      ${isOnline ? `<span class="stat-pill">CPU: ${cpu}</span><span class="stat-pill">RAM: ${ram}</span>` : ''}
+    `;
+  }
+}
+
 function renderPcs() {
   const keys = Object.keys(activePcs);
   if (keys.length === 0) {
@@ -80,46 +147,40 @@ function renderPcs() {
     return;
   }
 
+  const emptyState = pcGrid.querySelector('.empty-state');
+  if (emptyState) emptyState.remove();
+
   let onlineCount = 0;
   keys.sort();
 
-  pcGrid.innerHTML = '';
+  // Видаляємо картки комп'ютерів, які більше не існують
+  const existingCards = pcGrid.querySelectorAll('[data-pc-card]');
+  existingCards.forEach(card => {
+    const pcName = card.getAttribute('data-pc-card');
+    if (!activePcs[pcName]) card.remove();
+  });
+
   keys.forEach(name => {
     const pc = activePcs[name];
     const isOnline = pc.status === 'online';
     if (isOnline) onlineCount++;
-
-    const card = document.createElement('div');
-    card.className = 'pc-card';
 
     const info = pc.info || {};
     const cpu = info.cpu !== undefined ? `${info.cpu}%` : 'н/д';
     const ram = info.ram !== undefined ? `${info.ram}%` : 'н/д';
     const osName = info.os || 'Windows';
 
-    card.innerHTML = `
-      <div class="pc-card-header">
-        <div class="pc-name">🖥 ${name}</div>
-        <div class="pc-badge ${isOnline ? 'badge-online' : 'badge-offline'}">
-          ${isOnline ? 'Онлайн' : 'Офлайн'}
-        </div>
-      </div>
-      <div class="pc-stats">
-        <div class="stat-pill">ОС: ${osName}</div>
-        ${isOnline ? `<div class="stat-pill">CPU: ${cpu}</div><div class="stat-pill">RAM: ${ram}</div>` : ''}
-      </div>
-      <div class="pc-actions">
-        <button class="btn btn-stream" onclick="openStream('${name}')" ${!isOnline ? 'disabled' : ''}>🔴 Демонстрація</button>
-        <button class="btn btn-secondary" onclick="openScreenshot('${name}')" ${!isOnline ? 'disabled' : ''}>📸 Скріншот</button>
-        <button class="btn btn-secondary" onclick="openProcesses('${name}')" ${!isOnline ? 'disabled' : ''}>📋 Процеси</button>
-        <button class="btn btn-primary" onclick="openUrlModal('${name}')" ${!isOnline ? 'disabled' : ''}>🌐 Відкрити URL</button>
-        <button class="btn btn-secondary" onclick="openPicModal('${name}')" ${!isOnline ? 'disabled' : ''}>🖼 Картинка</button>
-        <button class="btn btn-warning" onclick="openKillModal('${name}')" ${!isOnline ? 'disabled' : ''}>❌ Закрити процес</button>
-        <button class="btn btn-secondary" onclick="confirmRestart('${name}')" ${!isOnline ? 'disabled' : ''}>🔄 Рестарт</button>
-        <button class="btn btn-danger" onclick="confirmShutdown('${name}')" ${!isOnline ? 'disabled' : ''}>⏻ Вимкнути</button>
-      </div>
-    `;
-    pcGrid.appendChild(card);
+    let card = document.getElementById(`pc-card-${name}`);
+    if (!card) {
+      card = document.createElement('div');
+      card.id = `pc-card-${name}`;
+      card.setAttribute('data-pc-card', name);
+      card.className = `pc-card ${isOnline ? 'pc-card-online' : 'pc-card-offline'}`;
+      card.innerHTML = buildCardHtml(name, isOnline, osName, cpu, ram);
+      pcGrid.appendChild(card);
+    } else {
+      updateCard(card, name, isOnline, osName, cpu, ram);
+    }
   });
 
   statOnline.textContent = `Онлайн: ${onlineCount} / ${keys.length}`;
@@ -367,32 +428,32 @@ window.changeStreamFps = async (fps) => {
   }
 };
 
-// 🔴 Live Screen Stream (Демонстрація екрану)
-window.openStream = async (pcName) => {
+// 🔴 Live Screen Stream (Демонстрація екрану на весь екран / у модальному вікні)
+window.openStream = (pcName) => {
   activeStreamPc = pcName;
   document.getElementById('streamTitle').textContent = `🔴 Демонстрація екрану: ${pcName}`;
-  streamImg.style.display = 'none';
-  streamSpinner.style.display = 'block';
-  streamFps.textContent = 'Підключення до трансляції...';
-  modalStream.classList.add('active');
 
-  const res = await sendCommand(pcName, 'start_stream', { fps: currentFps });
-  if (res.status !== 'ok') {
-    showToast(`Не вдалося запустити стрім: ${res.message}`, true);
-    closeStream();
+  // Якщо в картці ПК вже транслюється екран — відображаємо його одразу без затримки
+  const cardImg = document.getElementById(`stream-img-${pcName}`);
+  if (cardImg && cardImg.src && cardImg.src.startsWith('data:image')) {
+    streamImg.src = cardImg.src;
+    streamImg.style.display = 'block';
+    streamSpinner.style.display = 'none';
+  } else {
+    streamImg.style.display = 'none';
+    streamSpinner.style.display = 'block';
   }
+
+  streamFps.textContent = 'Трансляція активна';
+  modalStream.classList.add('active');
 };
 
-window.closeStream = async () => {
-  if (activeStreamPc) {
-    const pc = activeStreamPc;
-    activeStreamPc = null;
-    modalStream.classList.remove('active');
-    streamImg.src = '';
-    streamImg.style.display = 'none';
-    streamSpinner.style.display = 'none';
-    await sendCommand(pc, 'stop_stream');
-  }
+window.closeStream = () => {
+  activeStreamPc = null;
+  modalStream.classList.remove('active');
+  streamImg.src = '';
+  streamImg.style.display = 'none';
+  streamSpinner.style.display = 'none';
 };
 
 window.toggleStreamFullscreen = () => {
@@ -419,16 +480,33 @@ function setupDashboardWebSocket() {
       const data = JSON.parse(event.data);
       if (data.type === 'pc_status_change' || data.type === 'stats_update') {
         fetchPcs();
-      } else if (data.type === 'stream_frame' && data.pc === activeStreamPc) {
-        streamSpinner.style.display = 'none';
-        streamImg.src = 'data:image/jpeg;base64,' + data.frame;
-        streamImg.style.display = 'block';
-        streamFrameCount++;
-        const now = Date.now();
-        if (now - lastFpsTime >= 1000) {
-          streamFps.textContent = `Трансляція активна • ~${streamFrameCount} FPS`;
-          streamFrameCount = 0;
-          lastFpsTime = now;
+      } else if (data.type === 'stream_frame') {
+        const pc = data.pc;
+        const frame = data.frame;
+
+        // 1. Оновлюємо відеопотік безпосередньо в картці комп'ютера
+        const cardImg = document.getElementById(`stream-img-${pc}`);
+        const cardLoader = document.getElementById(`loader-${pc}`);
+        if (cardImg) {
+          cardImg.src = 'data:image/jpeg;base64,' + frame;
+          if (cardImg.style.display === 'none') {
+            cardImg.style.display = 'block';
+            if (cardLoader) cardLoader.style.display = 'none';
+          }
+        }
+
+        // 2. Якщо користувач відкрив повноекранний перегляд для цього ПК
+        if (activeStreamPc === pc) {
+          streamSpinner.style.display = 'none';
+          streamImg.src = 'data:image/jpeg;base64,' + frame;
+          streamImg.style.display = 'block';
+          streamFrameCount++;
+          const now = Date.now();
+          if (now - lastFpsTime >= 1000) {
+            streamFps.textContent = `Трансляція активна • ~${streamFrameCount} FPS`;
+            streamFrameCount = 0;
+            lastFpsTime = now;
+          }
         }
       }
     } catch (e) {}
