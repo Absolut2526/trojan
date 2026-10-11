@@ -171,12 +171,15 @@ class ConnectionManager:
             logger.error(f"Error sending action '{action}' to {pc_name}: {e}")
             return False
 
-    def handle_client_response(self, data: Dict[str, Any]):
+    def handle_client_response(self, data: Dict[str, Any]) -> bool:
+        """Повертає True, якщо відповідь закрила чийсь запит на відповідь (request_id)."""
         request_id = data.get("request_id")
         if request_id and request_id in self.pending_requests:
             future = self.pending_requests[request_id]
             if not future.done():
                 future.set_result(data)
+            return True
+        return False
 
     def update_client_stats(self, pc_name: str, stats: Dict[str, Any]):
         if pc_name in self.client_info:

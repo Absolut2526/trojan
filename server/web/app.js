@@ -68,6 +68,7 @@ async function fetchPcs() {
     const data = await res.json();
     activePcs = data;
     renderPcs();
+    refreshMouseButton();
   } catch (err) {
     console.error('Fetch PCs error:', err);
   }
@@ -443,6 +444,7 @@ window.changeStreamFps = async (fps) => {
 window.openStream = (pcName) => {
   activeStreamPc = pcName;
   document.getElementById('streamTitle').textContent = `🔴 Демонстрація екрану: ${pcName}`;
+  refreshMouseButton();
 
   // Якщо в картці ПК вже транслюється екран — відображаємо його одразу без затримки
   const cardImg = document.getElementById(`stream-img-${pcName}`);
@@ -460,7 +462,7 @@ window.openStream = (pcName) => {
 };
 
 window.closeStream = () => {
-  if (mouseControlEnabled) toggleMouseControl(true);
+  if (mouseControlEnabled) setMouseControl(false, true);
   isDragging = false;
   activeStreamPc = null;
   modalStream.classList.remove('active');
@@ -503,23 +505,60 @@ function isOverStreamImage(e) {
          e.clientY >= rect.top && e.clientY <= rect.bottom;
 }
 
-window.toggleMouseControl = (silent = false) => {
-  mouseControlEnabled = !mouseControlEnabled;
+// Показуємо помилки, які повертає ПК-клієнт (наприклад, немає бекенду керування мишею)
+let lastControlError = { key: '', at: 0 };
+function showControlError(pc, message) {
+  const key = `${pc}:${message}`;
+  const now = Date.now();
+  if (key === lastControlError.key && now - lastControlError.at < 8000) return;
+  lastControlError = { key, at: now };
+  showToast(`🖱 ${pc}: ${message}`, true);
+}
+
+function setMouseControl(enabled, silent = false) {
+  mouseControlEnabled = enabled;
   isDragging = false;
 
   const btn = document.getElementById('btnMouseControl');
-  if (btn) {
-    btn.className = `btn ${mouseControlEnabled ? 'btn-primary' : 'btn-secondary'}`;
-    btn.textContent = `🖱 Миша: ${mouseControlEnabled ? 'УВІМК' : 'ВИКЛ'}`;
+  if (btn && !btn.disabled) {
+    btn.className = `btn ${enabled ? 'btn-primary' : 'btn-secondary'}`;
+    btn.textContent = `🖱 Миша: ${enabled ? 'УВІМК' : 'ВИКЛ'}`;
   }
-  streamImg.style.cursor = mouseControlEnabled ? 'crosshair' : 'default';
+  streamImg.style.cursor = enabled ? 'crosshair' : 'default';
 
   if (!silent) {
-    showToast(mouseControlEnabled
+    showToast(enabled
       ? '🖱 Керування мишею увімкнено (Esc — вимкнути)'
       : '🖱 Керування мишею вимкнено');
   }
-};
+}
+
+window.toggleMouseControl = (silent = false) => setMouseControl(!mouseControlEnabled, silent);
+
+// Стан кнопки залежить від того, який бекенд керування мишею повідомив ПК-клієнт
+function refreshMouseButton() {
+  if (!activeStreamPc) return;
+  const btn = document.getElementById('btnMouseControl');
+  if (!btn) return;
+
+  const info = (activePcs[activeStreamPc] && activePcs[activeStreamPc].info) || {};
+  const backend = info.mouse;
+
+  if (backend === null) {
+    if (mouseControlEnabled) setMouseControl(false, true);
+    btn.className = 'btn btn-secondary';
+    btn.disabled = true;
+    btn.textContent = '🖱 Миша: Н/Д';
+    btn.title = 'Клієнт на цьому ПК не має бекенду керування мишею — перезберіть або оновіть pc_client';
+    return;
+  }
+
+  btn.disabled = false;
+  btn.textContent = `🖱 Миша: ${mouseControlEnabled ? 'УВІМК' : 'ВИКЛ'}`;
+  btn.title = backend
+    ? `Бекенд керування мишею: ${backend}`
+    : 'Бекенд керування мишею ще невідомий (чекаємо heartbeat від ПК)';
+}
 
 // Рух курсору: працює над картинкою трансляції, а під час перетягування — по всій сторінці
  document.addEventListener('mousemove', (e) => {
@@ -593,6 +632,8 @@ function setupDashboardWebSocket() {
       const data = JSON.parse(event.data);
       if (data.type === 'pc_status_change' || data.type === 'stats_update') {
         fetchPcs();
+      } else if (data.type === 'control_error') {
+        showControlError(data.pc, data.message);
       } else if (data.type === 'stream_frame') {
         const pc = data.pc;
         const frame = data.frame;

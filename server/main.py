@@ -96,7 +96,16 @@ async def websocket_client_endpoint(
 
             if msg_type == "response":
                 # Response to a previously sent command
-                manager.handle_client_response(data)
+                handled = manager.handle_client_response(data)
+                # Помилка fire-and-forget команди (рух мишi тощо) — показуємо її в дашборді,
+                # бо інакше збій на ПК залишається непомітним
+                if not handled and data.get("status") == "error":
+                    await manager.broadcast_to_dashboards({
+                        "type": "control_error",
+                        "pc": pc_name,
+                        "action": data.get("action"),
+                        "message": data.get("message") or "Невідома помилка на ПК"
+                    })
 
             elif msg_type == "heartbeat":
                 # Heartbeat with CPU/RAM stats

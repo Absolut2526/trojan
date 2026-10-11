@@ -8,6 +8,7 @@ import platform
 import socket
 import sys
 import threading
+import time
 import urllib.request
 import uuid
 import webbrowser
@@ -31,6 +32,113 @@ except Exception:
     HAS_PYAUTOGUI = False
 
 MOUSE_ACTIONS = {"mouse_move", "mouse_click", "mouse_down", "mouse_up", "mouse_scroll"}
+
+# --- Бекенди керування мишею -------------------------------------------------
+# Флаги подій миші Win32 (user32.mouse_event)
+MOUSE_EVENT_FLAGS = {
+    "left": (0x0002, 0x0004),    # MOUSEEVENTF_LEFTDOWN / LEFTUP
+    "right": (0x0008, 0x0010),   # MOUSEEVENTF_RIGHTDOWN / RIGHTUP
+    "middle": (0x0020, 0x0040),  # MOUSEEVENTF_MIDDLEDOWN / MIDDLEUP
+}
+MOUSEEVENTF_WHEEL = 0x0800
+WHEEL_DELTA = 120
+
+
+class PyAutoGUIBackend:
+    """Кросплатформний бекенд через pyautogui (потрібна встановлена бібліотека)."""
+    name = "pyautogui"
+
+    def size(self):
+        return pyautogui.size()
+
+    def move(self, x, y):
+        pyautogui.moveTo(int(x), int(y), _pause=False)
+
+    def button_down(self, button):
+        pyautogui.mouseDown(button=button, _pause=False)
+
+    def button_up(self, button):
+        pyautogui.mouseUp(button=button, _pause=False)
+
+    def click(self, button, clicks):
+        pyautogui.click(button=button, clicks=clicks, _pause=False)
+
+    def scroll(self, clicks):
+        pyautogui.scroll(int(clicks), _pause=False)
+
+
+class WindowsMouseBackend:
+    """
+    Нативний Win32-бекенд: user32.SetCursorPos + user32.mouse_event.
+    Не потребує сторонніх бібліотек, тому працює навіть якщо pyautogui
+    не потрапив у зібраний .exe або не встановився.
+    """
+    name = "win32"
+
+    def __init__(self, user32=None):
+        if user32 is None:
+            import ctypes
+            user32 = ctypes.windll.user32
+        self.user32 = user32
+
+    def size(self):
+        return (self.user32.GetSystemMetrics(0), self.user32.GetSystemMetrics(1))
+
+    def move(self, x, y):
+        if not self.user32.SetCursorPos(int(x), int(y)):
+            raise RuntimeError("Windows відхилив переміщення курсору (SetCursorPos)")
+
+    def _flags(self, button, down):
+        down_flag, up_flag = MOUSE_EVENT_FLAGS.get(button, MOUSE_EVENT_FLAGS["left"])
+        return down_flag if down else up_flag
+
+    def button_down(self, button):
+        self.user32.mouse_event(self._flags(button, True), 0, 0, 0, 0)
+
+    def button_up(self, button):
+        self.user32.mouse_event(self._flags(button, False), 0, 0, 0, 0)
+
+    def click(self, button, clicks):
+        for i in range(max(1, int(clicks))):
+            self.button_down(button)
+            self.button_up(button)
+            if i + 1 < clicks:
+                # Невелика пауза, щоб Windows порахував це подвійним кліком
+                time.sleep(0.03)
+
+    def scroll(self, clicks):
+        if clicks:
+            self.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, int(clicks) * WHEEL_DELTA, 0)
+
+
+_mouse_backend = None
+_mouse_backend_ready = False
+
+
+def create_mouse_backend(sys_name=None, user32=None):
+    """Обирає бекенд: на Windows — нативний Win32, інакше pyautogui."""
+    sys_name = (sys_name or platform.system()).lower()
+    if "windows" in sys_name:
+        try:
+            return WindowsMouseBackend(user32=user32)
+        except Exception as e:
+            logger.warning(f"Нативний Win32-бекенд недоступний ({e}) — пробуємо pyautogui")
+    if HAS_PYAUTOGUI:
+        return PyAutoGUIBackend()
+    return None
+
+
+def get_mouse_backend():
+    global _mouse_backend, _mouse_backend_ready
+    if not _mouse_backend_ready:
+        _mouse_backend = create_mouse_backend()
+        _mouse_backend_ready = True
+    return _mouse_backend
+
+
+def mouse_backend_name():
+    backend = get_mouse_backend()
+    return backend.name if backend else None
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -281,7 +389,20 @@ def clamp_rel(value, fallback: float = 0.5) -> float:
     return min(1.0, max(0.0, v))
 
 
-def rel_to_screen(rel_x, rel_y):
+def screen_size():
+    """Розмір екрана від активного бекенду керування мишею."""
+    backend = get_mouse_backend()
+    if backend:
+        try:
+            return backend.size()
+        except Exception:
+            pass
+    if HAS_PYAUTOGUI:
+        return pyautogui.size()
+    return None
+
+
+def rel_to_screen(rel_x, rel_y, size=None):
     """Переводить відносні координати картинки (0.0–1.0) у пікселі монітора, що транслюється."""
     if stream_monitor:
         left = stream_monitor["left"]
@@ -289,10 +410,13 @@ def rel_to_screen(rel_x, rel_y):
         width = stream_monitor["width"]
         height = stream_monitor["height"]
     else:
-        width, height = pyautogui.size()
+        size = size or screen_size()
+        if not size:
+            raise RuntimeError("Немає доступного бекенду керування мишею")
+        width, height = size
         left = top = 0
-    x = int(left + clamp_rel(rel_x) * (width - 1))
-    y = int(top + clamp_rel(rel_y) * (height - 1))
+    x = int(left + clamp_rel(rel_x) * (max(1, width) - 1))
+    y = int(top + clamp_rel(rel_y) * (max(1, height) - 1))
     return x, y
 
 
@@ -306,48 +430,54 @@ def perform_mouse_action(action: str, params: dict) -> dict:
     Виконує дію миші на локальному ПК.
     Синхронно (без потоку), щоб порядок подій drag & drop не порушувався.
     """
-    if not HAS_PYAUTOGUI:
-        return {"status": "error", "message": "Бібліотека pyautogui не встановлена на цьому ПК"}
+    backend = get_mouse_backend()
+    if backend is None:
+        return {
+            "status": "error",
+            "message": "Немає бекенду керування мишею: ні нативний Win32, ні pyautogui недоступні"
+        }
 
     button = normalize_button(params.get("button"))
     has_coords = params.get("x") is not None and params.get("y") is not None
 
-    if action == "mouse_move":
-        x, y = rel_to_screen(params.get("x", 0.5), params.get("y", 0.5))
-        pyautogui.moveTo(x, y, _pause=False)
+    try:
+        if action == "mouse_move":
+            x, y = rel_to_screen(params.get("x", 0.5), params.get("y", 0.5), backend.size())
+            backend.move(x, y)
 
-    elif action == "mouse_scroll":
-        try:
-            delta_y = float(params.get("delta_y") or 0)
-        except (TypeError, ValueError):
-            delta_y = 0.0
-        # Одна сходинка колеса у браузері ≈ 100 одиниць deltaY (додатні — вниз)
-        clicks = int(-delta_y / 100)
-        if clicks == 0:
-            clicks = 1 if delta_y < 0 else -1
-        pyautogui.scroll(clicks, _pause=False)
-
-    elif action in ("mouse_click", "mouse_down", "mouse_up"):
-        if has_coords:
-            x, y = rel_to_screen(params.get("x"), params.get("y"))
-            pyautogui.moveTo(x, y, _pause=False)
-
-        if action == "mouse_click":
+        elif action == "mouse_scroll":
             try:
-                clicks = max(1, min(3, int(params.get("clicks") or 1)))
+                delta_y = float(params.get("delta_y") or 0)
             except (TypeError, ValueError):
-                clicks = 1
-            if has_coords:
-                pyautogui.click(x=x, y=y, button=button, clicks=clicks, _pause=False)
-            else:
-                pyautogui.click(button=button, clicks=clicks, _pause=False)
-        elif action == "mouse_down":
-            pyautogui.mouseDown(button=button, _pause=False)
-        else:
-            pyautogui.mouseUp(button=button, _pause=False)
+                delta_y = 0.0
+            # Одна сходинка колеса у браузері ≈ 100 одиниць deltaY (додатні — вниз)
+            clicks = int(-delta_y / 100)
+            if clicks == 0:
+                clicks = 1 if delta_y < 0 else -1
+            backend.scroll(clicks)
 
-    else:
-        return {"status": "error", "message": f"Невідома дія миші: {action}"}
+        elif action in ("mouse_click", "mouse_down", "mouse_up"):
+            if has_coords:
+                x, y = rel_to_screen(params.get("x"), params.get("y"), backend.size())
+                backend.move(x, y)
+
+            if action == "mouse_click":
+                try:
+                    clicks = max(1, min(3, int(params.get("clicks") or 1)))
+                except (TypeError, ValueError):
+                    clicks = 1
+                backend.click(button, clicks)
+            elif action == "mouse_down":
+                backend.button_down(button)
+            else:
+                backend.button_up(button)
+
+        else:
+            return {"status": "error", "message": f"Невідома дія миші: {action}"}
+
+    except Exception as e:
+        logger.error(f"Помилка дії миші {action}: {e}")
+        return {"status": "error", "message": f"Не вдалося виконати {action}: {e}"}
 
     return {"status": "ok"}
 
@@ -484,13 +614,31 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
         logger.error(f"Помилка виконання {action}: {e}")
         return {"status": "error", "message": str(e)}
 
+_last_mouse_error_at = 0.0
+MOUSE_ERROR_THROTTLE = 5.0
+
+
+def should_report_error(action: str) -> bool:
+    """Не даємо клієнту слати одну й ту саму помилку на кожен рух мишi (40 разів на секунду)."""
+    global _last_mouse_error_at
+    if action != "mouse_move":
+        return True
+    now = time.monotonic()
+    if now - _last_mouse_error_at < MOUSE_ERROR_THROTTLE:
+        return False
+    _last_mouse_error_at = now
+    return True
+
+
 async def heartbeat_sender(websocket):
     while True:
         try:
             stats = {
                 "cpu": psutil.cpu_percent(),
                 "ram": psutil.virtual_memory().percent,
-                "os": platform.system()
+                "os": platform.system(),
+                # Який бекенд керує мишею: "win32", "pyautogui" або None (керування недоступне)
+                "mouse": mouse_backend_name()
             }
             await websocket.send(json.dumps({"type": "heartbeat", "stats": stats}))
             await asyncio.sleep(5)
@@ -538,10 +686,14 @@ async def run_client():
                                 logger.info(f"Отримано команду: {action}")
                             result = await execute_action(action, params, websocket=websocket)
 
-                            if req_id:
+                            # Відповідаємо завжди на команди з request_id.
+                            # Помилки fire-and-forget (миша) теж відправляємо, інакше збої ніде не видно,
+                            # але throttling не дає заспамити канал на кожен рух мишi.
+                            if req_id or (result.get("status") == "error" and should_report_error(action)):
                                 await websocket.send(json.dumps({
                                     "type": "response",
                                     "request_id": req_id,
+                                    "action": action,
                                     **result
                                 }))
                         except json.JSONDecodeError:
@@ -559,8 +711,11 @@ async def run_client():
 
 if __name__ == "__main__":
     init_platform()
-    if not HAS_PYAUTOGUI:
-        logger.warning("pyautogui не знайдено — керування мишею буде недоступне (pip install pyautogui)")
+    backend = get_mouse_backend()
+    if backend:
+        logger.info(f"Керування мишею: бекенд '{backend.name}'")
+    else:
+        logger.warning("Керування мишею недоступне: не знайдено ні Win32, ні pyautogui")
     try:
         asyncio.run(run_client())
     except KeyboardInterrupt:
