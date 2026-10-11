@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -131,7 +132,23 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
         asyncio.create_task(manager.send_command(active_pc, "start_stream", {"fps": 8}))
     try:
         while True:
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            # Керування ПК напряму з дашборду (миша, скрол тощо) —
+            # без HTTP-запиту й без очікування відповіді, щоб не втрачати плавність
+            if data.get("type") == "control":
+                target_pc = data.get("pc")
+                action = data.get("action")
+                params = data.get("params") or {}
+                if not target_pc or not action:
+                    continue
+                if not manager.is_online(target_pc):
+                    continue
+                asyncio.create_task(manager.send_action(target_pc, action, params))
     except WebSocketDisconnect:
         manager.disconnect_dashboard(websocket)
     except Exception:

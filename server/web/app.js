@@ -33,6 +33,7 @@ const streamFps = document.getElementById('streamFps');
 let activeStreamPc = null;
 let streamFrameCount = 0;
 let lastFpsTime = Date.now();
+let dashboardSocket = null;
 
 function showToast(message, isError = false) {
   toastEl.textContent = message;
@@ -459,12 +460,114 @@ window.openStream = (pcName) => {
 };
 
 window.closeStream = () => {
+  if (mouseControlEnabled) toggleMouseControl(true);
+  isDragging = false;
   activeStreamPc = null;
   modalStream.classList.remove('active');
   streamImg.src = '';
   streamImg.style.display = 'none';
   streamSpinner.style.display = 'none';
 };
+
+// 🖱 Керування мишею віддаленого ПК прямо з трансляції
+let mouseControlEnabled = false;
+let isDragging = false;
+let lastMouseMoveTime = 0;
+const MOUSE_MOVE_THROTTLE_MS = 25; // ~40 подій/с: плавно для ока і не забиває канал
+const MOUSE_BUTTON_MAP = { 0: 'left', 1: 'middle', 2: 'right' };
+
+function sendControl(action, params = {}) {
+  if (!mouseControlEnabled || !activeStreamPc) return false;
+  if (!dashboardSocket || dashboardSocket.readyState !== WebSocket.OPEN) return false;
+  dashboardSocket.send(JSON.stringify({
+    type: 'control',
+    pc: activeStreamPc,
+    action,
+    params
+  }));
+  return true;
+}
+
+function getRelativeCoords(e) {
+  const rect = streamImg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  return {
+    x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+  };
+}
+
+function isOverStreamImage(e) {
+  const rect = streamImg.getBoundingClientRect();
+  return e.clientX >= rect.left && e.clientX <= rect.right &&
+         e.clientY >= rect.top && e.clientY <= rect.bottom;
+}
+
+window.toggleMouseControl = (silent = false) => {
+  mouseControlEnabled = !mouseControlEnabled;
+  isDragging = false;
+
+  const btn = document.getElementById('btnMouseControl');
+  if (btn) {
+    btn.className = `btn ${mouseControlEnabled ? 'btn-primary' : 'btn-secondary'}`;
+    btn.textContent = `🖱 Миша: ${mouseControlEnabled ? 'УВІМК' : 'ВИКЛ'}`;
+  }
+  streamImg.style.cursor = mouseControlEnabled ? 'crosshair' : 'default';
+
+  if (!silent) {
+    showToast(mouseControlEnabled
+      ? '🖱 Керування мишею увімкнено (Esc — вимкнути)'
+      : '🖱 Керування мишею вимкнено');
+  }
+};
+
+// Рух курсору: працює над картинкою трансляції, а під час перетягування — по всій сторінці
+ document.addEventListener('mousemove', (e) => {
+  if (!mouseControlEnabled || !activeStreamPc) return;
+  if (!isDragging && !isOverStreamImage(e)) return;
+
+  const now = Date.now();
+  if (now - lastMouseMoveTime < MOUSE_MOVE_THROTTLE_MS) return;
+  lastMouseMoveTime = now;
+
+  const coords = getRelativeCoords(e);
+  if (coords) sendControl('mouse_move', coords);
+});
+
+// Спершу переводимо курсор у точку натиску, потім тримаємо/відпускаємо кнопку (підтримка drag & drop)
+streamImg.addEventListener('mousedown', (e) => {
+  if (!mouseControlEnabled) return;
+  e.preventDefault();
+  isDragging = true;
+
+  const coords = getRelativeCoords(e);
+  if (coords) sendControl('mouse_move', coords);
+  sendControl('mouse_down', { button: MOUSE_BUTTON_MAP[e.button] || 'left' });
+});
+
+// Відпускання ловимо на документі, щоб кнопка не "залипала", якщо мишу відпустили поза вікном
+ document.addEventListener('mouseup', (e) => {
+  if (!isDragging) return;
+  isDragging = false;
+  sendControl('mouse_up', { button: MOUSE_BUTTON_MAP[e.button] || 'left' });
+});
+
+streamImg.addEventListener('contextmenu', (e) => {
+  if (mouseControlEnabled) e.preventDefault();
+});
+
+streamImg.addEventListener('wheel', (e) => {
+  if (!mouseControlEnabled) return;
+  e.preventDefault();
+  sendControl('mouse_scroll', { delta_y: e.deltaY });
+}, { passive: false });
+
+// Esc — швидке вимкнення керування
+ document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && mouseControlEnabled && modalStream.classList.contains('active')) {
+    toggleMouseControl();
+  }
+});
 
 window.toggleStreamFullscreen = () => {
   const container = document.querySelector('#modalStream .modal-content');
@@ -483,9 +586,9 @@ window.toggleStreamFullscreen = () => {
 function setupDashboardWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
-  const socket = new WebSocket(wsUrl);
+  dashboardSocket = new WebSocket(wsUrl);
 
-  socket.onmessage = (event) => {
+  dashboardSocket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'pc_status_change' || data.type === 'stats_update') {
@@ -522,7 +625,7 @@ function setupDashboardWebSocket() {
     } catch (e) {}
   };
 
-  socket.onclose = () => {
+  dashboardSocket.onclose = () => {
     setTimeout(setupDashboardWebSocket, 3000);
   };
 }

@@ -573,6 +573,12 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* Керування мишею через трансляцію: без виділення та перетягування самої картинки */
+#streamImg {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 .text-center { text-align: center; }
 .empty-state {
   grid-column: 1 / -1;

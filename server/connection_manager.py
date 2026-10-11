@@ -152,6 +152,25 @@ class ConnectionManager:
         finally:
             self.pending_requests.pop(request_id, None)
 
+    async def send_action(self, pc_name: str, action: str, params: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        "Fire and forget" команда: надсилається без очікування відповіді.
+        Використовується для частих подій (рух миші, скрол), де затримка критична.
+        """
+        websocket = self.active_clients.get(pc_name)
+        if not websocket:
+            return False
+        try:
+            await websocket.send_text(json.dumps({
+                "request_id": None,
+                "action": action,
+                "params": params or {}
+            }))
+            return True
+        except Exception as e:
+            logger.error(f"Error sending action '{action}' to {pc_name}: {e}")
+            return False
+
     def handle_client_response(self, data: Dict[str, Any]):
         request_id = data.get("request_id")
         if request_id and request_id in self.pending_requests:
