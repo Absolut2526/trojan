@@ -24,6 +24,7 @@
           <span class="status-dot"></span>
           <span id="statOnline">Онлайн: 0 / 0</span>
         </div>
+        <button class="btn btn-primary" onclick="openUrlModal('ALL')">🌐 URL на ВСІ</button>
         <button class="btn btn-primary" onclick="openPicModal('ALL')">🖼 Картинка на ВСІ</button>
         <button class="btn btn-warning" onclick="broadcastRestart()">🔄 Рестарт усіх</button>
         <button class="btn btn-danger" onclick="broadcastShutdown()">⏻ Вимкнути всі</button>
@@ -57,8 +58,7 @@
     <div class="modal-content modal-large">
       <div class="modal-header">
         <div style="display:flex;align-items:center;gap:10px;">
-          <h3 id="streamTitle">🔴 Демонстрація екрану</h3>
-          <span class="live-tag">LIVE</span>
+          <h3 id="streamTitle">🖥 Демонстрація екрану</h3>
         </div>
         <span class="modal-close" onclick="closeStream()">&times;</span>
       </div>

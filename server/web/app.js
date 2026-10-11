@@ -89,11 +89,9 @@ function buildCardHtml(name, isOnline, osName, cpu, ram) {
 
     <!-- КНОПКИ КЕРУВАННЯ (ЗВЕРХУ НАД ДЕМОНСТРАЦІЄЮ) -->
     <div class="pc-actions" id="actions-${name}">
-      <button class="btn-action" onclick="openScreenshot('${name}')" ${!isOnline ? 'disabled' : ''} title="Знімок екрану">📸 Скрін</button>
       <button class="btn-action" onclick="openProcesses('${name}')" ${!isOnline ? 'disabled' : ''} title="Список процесів">📋 Процеси</button>
       <button class="btn-action" onclick="openUrlModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Відкрити посилання">🌐 URL</button>
       <button class="btn-action" onclick="openPicModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Картинка на весь екран">🖼 Картинка</button>
-      <button class="btn-action btn-action-kill" onclick="openKillModal('${name}')" ${!isOnline ? 'disabled' : ''} title="Закрити процес">❌ Процес</button>
       <button class="btn-action btn-action-fullscreen" onclick="openStream('${name}')" ${!isOnline ? 'disabled' : ''} title="Розгорнути на весь екран">⛶ Екран</button>
       <button class="btn-action btn-action-restart" onclick="confirmRestart('${name}')" ${!isOnline ? 'disabled' : ''} title="Перезавантажити ПК">🔄 Рестарт</button>
       <button class="btn-action btn-action-shutdown" onclick="confirmShutdown('${name}')" ${!isOnline ? 'disabled' : ''} title="Вимкнути ПК">⏻ Вимкнути</button>
@@ -102,7 +100,6 @@ function buildCardHtml(name, isOnline, osName, cpu, ram) {
     <!-- ДЕМОНСТРАЦІЯ ЕКРАНУ (ПІД КНОПКАМИ КЕРУВАННЯ) -->
     <div class="pc-screen-wrapper ${isOnline ? 'clickable' : ''}" id="screen-wrapper-${name}" onclick="${isOnline ? `openStream('${name}')` : ''}" title="${isOnline ? 'Натисніть для збільшення трансляції' : ''}">
       ${isOnline ? `
-        <div class="screen-live-badge"><span class="live-dot"></span> LIVE</div>
         <div class="screen-loading" id="loader-${name}">
           <div class="spinner-small"></div>
           <span>Очікування трансляції...</span>
@@ -278,7 +275,9 @@ window.killSpecificProcess = async (pcName, procName) => {
 // 🌐 Open URL
 window.openUrlModal = (pcName) => {
   currentTargetPc = pcName;
-  document.getElementById('urlTitle').textContent = `🌐 Відкрити URL: ${pcName}`;
+  document.getElementById('urlTitle').textContent = pcName === 'ALL'
+    ? '🌐 Відкрити URL на ВСІ комп\'ютери'
+    : `🌐 Відкрити URL: ${pcName}`;
   inputUrl.value = '';
   modalUrl.classList.add('active');
   inputUrl.focus();
@@ -292,12 +291,23 @@ btnSubmitUrl.onclick = async () => {
     url = 'https://' + url;
   }
   modalUrl.classList.remove('active');
-  showToast(`Відкриття ${url} на ${currentTargetPc}...`);
-  const res = await sendCommand(currentTargetPc, 'open_url', { url });
-  if (res.status === 'ok') {
-    showToast(`Успішно відкрито на ${currentTargetPc}!`);
+
+  if (currentTargetPc === 'ALL') {
+    showToast(`Відкриття ${url} на ВСІХ ПК клубу...`);
+    const res = await sendBroadcastCommand('open_url', { url });
+    if (res.status === 'ok') {
+      showToast(`URL успішно відкрито на ${res.count || 0} ПК!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
   } else {
-    showToast(`Помилка: ${res.message}`, true);
+    showToast(`Відкриття ${url} на ${currentTargetPc}...`);
+    const res = await sendCommand(currentTargetPc, 'open_url', { url });
+    if (res.status === 'ok') {
+      showToast(`Успішно відкрито на ${currentTargetPc}!`);
+    } else {
+      showToast(`Помилка: ${res.message}`, true);
+    }
   }
 };
 
