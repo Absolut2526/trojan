@@ -68,7 +68,7 @@ async function fetchPcs() {
     const data = await res.json();
     activePcs = data;
     renderPcs();
-    refreshMouseButton();
+    refreshInputButtons();
   } catch (err) {
     console.error('Fetch PCs error:', err);
   }
@@ -444,7 +444,7 @@ window.changeStreamFps = async (fps) => {
 window.openStream = (pcName) => {
   activeStreamPc = pcName;
   document.getElementById('streamTitle').textContent = `🔴 Демонстрація екрану: ${pcName}`;
-  refreshMouseButton();
+  refreshInputButtons();
 
   // Якщо в картці ПК вже транслюється екран — відображаємо його одразу без затримки
   const cardImg = document.getElementById(`stream-img-${pcName}`);
@@ -463,6 +463,7 @@ window.openStream = (pcName) => {
 
 window.closeStream = () => {
   if (mouseControlEnabled) setMouseControl(false, true);
+  if (keyboardCaptureEnabled) setKeyboardCapture(false, true);
   isDragging = false;
   activeStreamPc = null;
   modalStream.classList.remove('active');
@@ -478,8 +479,9 @@ let lastMouseMoveTime = 0;
 const MOUSE_MOVE_THROTTLE_MS = 25; // ~40 подій/с: плавно для ока і не забиває канал
 const MOUSE_BUTTON_MAP = { 0: 'left', 1: 'middle', 2: 'right' };
 
+// Універсальна відправка керування на активний ПК (миша, клавіатура — будь-яка дія)
 function sendControl(action, params = {}) {
-  if (!mouseControlEnabled || !activeStreamPc) return false;
+  if (!activeStreamPc) return false;
   if (!dashboardSocket || dashboardSocket.readyState !== WebSocket.OPEN) return false;
   dashboardSocket.send(JSON.stringify({
     type: 'control',
@@ -503,6 +505,79 @@ function isOverStreamImage(e) {
   const rect = streamImg.getBoundingClientRect();
   return e.clientX >= rect.left && e.clientX <= rect.right &&
          e.clientY >= rect.top && e.clientY <= rect.bottom;
+}
+
+// ⌨ Клавіатура віддаленого ПК
+let keyboardCaptureEnabled = false;
+const heldKeys = new Set();          // затиснуті модифікатори — щоб Shift/Ctrl не "залипали" на ПК
+const MODIFIER_TOKENS = new Set(['shift', 'ctrl', 'alt', 'win']);
+
+function isTextInputTarget(target) {
+  const tag = target && target.tagName ? String(target.tagName).toLowerCase() : '';
+  return tag === 'input' || tag === 'textarea' || !!(target && target.isContentEditable);
+}
+
+// e.key -> канонічний токен клієнта (той самий формат, що розуміє client.py)
+function keyToken(e) {
+  const k = e.key;
+  if (!k) return '';
+  if (k === ' ' || k === 'Spacebar') return 'space';
+  if (k.length === 1) return k;              // літери (у т.ч. кирилиця), цифри, пунктуація
+  const map = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    Escape: 'esc', Enter: 'enter', Control: 'ctrl', Meta: 'win', OS: 'win',
+    PageUp: 'pageup', PageDown: 'pagedown', Del: 'delete', ContextMenu: 'apps'
+  };
+  return map[k] || k.toLowerCase();
+}
+
+function releaseHeldKeys() {
+  heldKeys.forEach((key) => sendControl('key_up', { key }));
+  heldKeys.clear();
+}
+
+function setKeyboardCapture(enabled, silent = false) {
+  if (!enabled) releaseHeldKeys();
+  keyboardCaptureEnabled = enabled;
+
+  const btn = document.getElementById('btnKeyboard');
+  if (btn && !btn.disabled) {
+    btn.className = `btn ${enabled ? 'btn-primary' : 'btn-secondary'}`;
+    btn.textContent = `⌨ Клавіатура: ${enabled ? 'УВІМК' : 'ВИКЛ'}`;
+  }
+
+  if (!silent) {
+    showToast(enabled
+      ? '⌨ Клавіатура увімкнена: натискання йдуть на ПК (Esc — вимкнути)'
+      : '⌨ Клавіатуру вимкнено');
+  }
+}
+
+window.toggleKeyboard = (silent = false) => setKeyboardCapture(!keyboardCaptureEnabled, silent);
+
+// Надсилає текст цілком — найкраще для кирилиці та довгих рядків
+window.sendKeyboardText = () => {
+  const input = document.getElementById('inputKeyText');
+  if (!input) return;
+  const text = input.value;
+  if (!text) {
+    showToast('Введіть текст, який треба надрукувати на ПК', true);
+    return;
+  }
+  if (!sendControl('key_type', { text })) {
+    showToast('Немає активного ПК або з\u0027єднання з сервером', true);
+    return;
+  }
+  showToast(`⌨ Текст надіслано на ${activeStreamPc} (${text.length} симв.)`);
+  input.value = '';
+};
+
+function pressedModifiers(e) {
+  const mods = [];
+  if (e.ctrlKey) mods.push('ctrl');
+  if (e.altKey) mods.push('alt');
+  if (e.metaKey) mods.push('win');
+  return mods;
 }
 
 // Показуємо помилки, які повертає ПК-клієнт (наприклад, немає бекенду керування мишею)
@@ -535,29 +610,44 @@ function setMouseControl(enabled, silent = false) {
 
 window.toggleMouseControl = (silent = false) => setMouseControl(!mouseControlEnabled, silent);
 
-// Стан кнопки залежить від того, який бекенд керування мишею повідомив ПК-клієнт
-function refreshMouseButton() {
+// Стан кнопок залежить від того, який бекенд керування вводом повідомив ПК-клієнт
+function refreshInputButtons() {
   if (!activeStreamPc) return;
-  const btn = document.getElementById('btnMouseControl');
-  if (!btn) return;
-
   const info = (activePcs[activeStreamPc] && activePcs[activeStreamPc].info) || {};
-  const backend = info.mouse;
 
-  if (backend === null) {
-    if (mouseControlEnabled) setMouseControl(false, true);
-    btn.className = 'btn btn-secondary';
-    btn.disabled = true;
-    btn.textContent = '🖱 Миша: Н/Д';
-    btn.title = 'Клієнт на цьому ПК не має бекенду керування мишею — перезберіть або оновіть pc_client';
-    return;
+  const mouseBtn = document.getElementById('btnMouseControl');
+  if (mouseBtn) {
+    if (info.mouse === null) {
+      if (mouseControlEnabled) setMouseControl(false, true);
+      mouseBtn.className = 'btn btn-secondary';
+      mouseBtn.disabled = true;
+      mouseBtn.textContent = '🖱 Миша: Н/Д';
+      mouseBtn.title = 'Клієнт на цьому ПК не має бекенду керування мишею — перезберіть або оновіть pc_client';
+    } else {
+      mouseBtn.disabled = false;
+      mouseBtn.textContent = `🖱 Миша: ${mouseControlEnabled ? 'УВІМК' : 'ВИКЛ'}`;
+      mouseBtn.title = info.mouse
+        ? `Бекенд керування мишею: ${info.mouse}`
+        : 'Бекенд керування мишею ще невідомий (чекаємо heartbeat від ПК)';
+    }
   }
 
-  btn.disabled = false;
-  btn.textContent = `🖱 Миша: ${mouseControlEnabled ? 'УВІМК' : 'ВИКЛ'}`;
-  btn.title = backend
-    ? `Бекенд керування мишею: ${backend}`
-    : 'Бекенд керування мишею ще невідомий (чекаємо heartbeat від ПК)';
+  const kbBtn = document.getElementById('btnKeyboard');
+  if (kbBtn) {
+    if (info.keyboard === null) {
+      if (keyboardCaptureEnabled) setKeyboardCapture(false, true);
+      kbBtn.className = 'btn btn-secondary';
+      kbBtn.disabled = true;
+      kbBtn.textContent = '⌨ Клавіатура: Н/Д';
+      kbBtn.title = 'Клієнт на цьому ПК не має бекенду керування клавіатурою — оновіть pc_client';
+    } else {
+      kbBtn.disabled = false;
+      kbBtn.textContent = `⌨ Клавіатура: ${keyboardCaptureEnabled ? 'УВІМК' : 'ВИКЛ'}`;
+      kbBtn.title = info.keyboard
+        ? `Бекенд керування клавіатурою: ${info.keyboard}`
+        : 'Бекенд керування клавіатурою ще невідомий (чекаємо heartbeat від ПК)';
+    }
+  }
 }
 
 // Рух курсору: працює над картинкою трансляції, а під час перетягування — по всій сторінці
@@ -588,6 +678,7 @@ streamImg.addEventListener('mousedown', (e) => {
  document.addEventListener('mouseup', (e) => {
   if (!isDragging) return;
   isDragging = false;
+  if (!mouseControlEnabled) return;
   sendControl('mouse_up', { button: MOUSE_BUTTON_MAP[e.button] || 'left' });
 });
 
@@ -601,12 +692,68 @@ streamImg.addEventListener('wheel', (e) => {
   sendControl('mouse_scroll', { delta_y: e.deltaY });
 }, { passive: false });
 
-// Esc — швидке вимкнення керування
+// Клавіші: Esc вимикає керування, решта (у режимі клавіатури) летить на ПК
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && mouseControlEnabled && modalStream.classList.contains('active')) {
-    toggleMouseControl();
+  if (!modalStream.classList.contains('active')) return;
+  if (isTextInputTarget(e.target)) return;   // не заважаємо писати текст у полі надсилання
+
+  if (e.key === 'Escape') {
+    if (mouseControlEnabled || keyboardCaptureEnabled) {
+      e.preventDefault();
+      if (mouseControlEnabled) setMouseControl(false, true);
+      if (keyboardCaptureEnabled) setKeyboardCapture(false, true);
+      showToast('🖱⌨ Керування вимкнено');
+    }
+    return;
+  }
+
+  if (!keyboardCaptureEnabled) return;
+  e.preventDefault();
+
+  const token = keyToken(e);
+  if (!token) return;
+
+  if (MODIFIER_TOKENS.has(token)) {
+    if (!heldKeys.has(token)) {
+      heldKeys.add(token);
+      sendControl('key_down', { key: token });
+    }
+    return;
+  }
+
+  const mods = pressedModifiers(e);
+  if (mods.length) {
+    sendControl('key_hotkey', { keys: [...mods, token] });    // Ctrl+C, Alt+Tab, Win+D...
+    return;
+  }
+  sendControl('key_press', { key: token });
+});
+
+ document.addEventListener('keyup', (e) => {
+  if (!keyboardCaptureEnabled || !modalStream.classList.contains('active')) return;
+  if (isTextInputTarget(e.target)) return;
+  const token = keyToken(e);
+  if (MODIFIER_TOKENS.has(token)) {
+    e.preventDefault();
+    heldKeys.delete(token);
+    sendControl('key_up', { key: token });
   }
 });
+
+// Якщо вкладка/вікно втратило фокус — відпускаємо затиснуті модифікатори на ПК
+window.addEventListener('blur', () => { if (keyboardCaptureEnabled) releaseHeldKeys(); });
+
+// Enter у полі тексту — надіслати текст на ПК
+const inputKeyText = document.getElementById('inputKeyText');
+if (inputKeyText) {
+  inputKeyText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      window.sendKeyboardText();
+    }
+  });
+}
 
 window.toggleStreamFullscreen = () => {
   const container = document.querySelector('#modalStream .modal-content');

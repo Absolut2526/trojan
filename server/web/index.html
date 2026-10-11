@@ -76,10 +76,16 @@
           </div>
         </div>
         <div style="display:flex;gap:10px;">
+          <button id="btnKeyboard" class="btn btn-secondary" onclick="toggleKeyboard()" title="Увімкнути керування клавіатурою цього ПК (Esc — вимкнути)">⌨ Клавіатура: ВИКЛ</button>
           <button id="btnMouseControl" class="btn btn-secondary" onclick="toggleMouseControl()" title="Увімкнути керування мишею цього ПК (Esc — вимкнути)">🖱 Миша: ВИКЛ</button>
           <button id="btnStreamFullscreen" class="btn btn-secondary" onclick="toggleStreamFullscreen()">⛶ На весь екран</button>
           <button class="btn btn-secondary" onclick="closeStream()">Закрити</button>
         </div>
+      </div>
+      <div class="modal-footer" style="gap:8px;padding-top:0;">
+        <input type="text" id="inputKeyText" class="input-field" style="margin:0;flex:1;"
+               placeholder="Текст, який треба ввести на ПК (Enter — надіслати)" />
+        <button id="btnSendText" class="btn btn-primary" onclick="sendKeyboardText()" title="Надіслати текст на ПК">⌨ Надіслати</button>
       </div>
     </div>
   </div>

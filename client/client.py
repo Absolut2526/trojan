@@ -32,8 +32,12 @@ except Exception:
     HAS_PYAUTOGUI = False
 
 MOUSE_ACTIONS = {"mouse_move", "mouse_click", "mouse_down", "mouse_up", "mouse_scroll"}
+KEYBOARD_ACTIONS = {"key_type", "key_press", "key_hotkey", "key_down", "key_up"}
 
-# --- Бекенди керування мишею -------------------------------------------------
+# Максимальна довжина тексту за одну команду — захист від випадкового мегабайта
+MAX_TYPE_LENGTH = 5000
+
+# --- Бекенди керування мишею та клавіатурою -----------------------------------
 # Флаги подій миші Win32 (user32.mouse_event)
 MOUSE_EVENT_FLAGS = {
     "left": (0x0002, 0x0004),    # MOUSEEVENTF_LEFTDOWN / LEFTUP
@@ -43,6 +47,60 @@ MOUSE_EVENT_FLAGS = {
 MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
 
+# Флаги подій клавіатури Win32 (user32.keybd_event)
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+
+# Віртуальні коди клавіш Windows
+VK_CODES = {
+    "enter": 0x0D, "esc": 0x1B, "backspace": 0x08, "tab": 0x09, "space": 0x20,
+    "delete": 0x2E, "insert": 0x2D, "home": 0x24, "end": 0x23,
+    "pageup": 0x21, "pagedown": 0x22,
+    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "shift": 0x10, "ctrl": 0x11, "alt": 0x12, "win": 0x5B, "capslock": 0x14,
+    "printscreen": 0x2C, "pause": 0x13, "scrolllock": 0x91,
+    "numlock": 0x90, "apps": 0x5D,
+    **{f"f{i}": 0x6F + i for i in range(1, 13)},
+}
+# Ці клавіші потребують прапорця KEYEVENTF_EXTENDEDKEY
+EXTENDED_KEYS = {
+    "insert", "delete", "home", "end", "pageup", "pagedown",
+    "left", "up", "right", "down", "win", "apps", "printscreen", "numlock",
+}
+
+# Канонічні назви клавіш (браузер надсилає e.key, тут — уніфіковані токени)
+KEY_ALIASES = {
+    "return": "enter", "escape": "esc", "esc": "esc", "spacebar": "space", " ": "space",
+    "arrowup": "up", "arrowdown": "down", "arrowleft": "left", "arrowright": "right",
+    "control": "ctrl", "ctrl": "ctrl", "meta": "win", "super": "win", "os": "win", "windows": "win",
+    "altgraph": "alt", "del": "delete", "pagedown": "pagedown", "pageup": "pageup",
+    "capslock": "capslock", "printscreen": "printscreen", "scrolllock": "scrolllock",
+    "numlock": "numlock", "contextmenu": "apps",
+}
+
+# pyautogui-назви для канонічних токенів (для macOS/Linux)
+PYAUTOGUI_KEYS = {k: k for k in VK_CODES}
+PYAUTOGUI_KEYS["win"] = "win"
+
+# Ці помилки не показуємо в панелі на кожну подію (миша рухається і клавіші повторюються десятки разів на сек.)
+THROTTLED_ERROR_ACTIONS = {"mouse_move", "key_press", "key_down", "key_up", "key_hotkey"}
+
+
+def normalize_key(key) -> str:
+    """Приводить назву клавіші з браузера до канонічного вигляду (Enter -> enter, Cyrillic char — як є)."""
+    k = str(key if key is not None else "")
+    if not k:
+        return ""
+    if k in KEY_ALIASES:        # точний збіг потрібен для пробілу: " " -> space
+        return KEY_ALIASES[k]
+    low = k.strip().lower()
+    if low in KEY_ALIASES:
+        return KEY_ALIASES[low]
+    if len(k) == 1:
+        return k          # звичайний символ, включно з кирилицею та пунктуацією
+    return low
+
 
 class PyAutoGUIBackend:
     """Кросплатформний бекенд через pyautogui (потрібна встановлена бібліотека)."""
@@ -51,6 +109,7 @@ class PyAutoGUIBackend:
     def size(self):
         return pyautogui.size()
 
+    # --- миша ---
     def move(self, x, y):
         pyautogui.moveTo(int(x), int(y), _pause=False)
 
@@ -66,12 +125,36 @@ class PyAutoGUIBackend:
     def scroll(self, clicks):
         pyautogui.scroll(int(clicks), _pause=False)
 
+    # --- клавіатура ---
+    def type_text(self, text) -> int:
+        """Повертає кількість символів, які не вдалося надрукувати (pyautogui не вміє не-ASCII)."""
+        skipped = 0
+        for ch in text:
+            try:
+                pyautogui.write(ch)
+            except Exception:
+                skipped += 1
+            time.sleep(0.005)
+        return skipped
 
-class WindowsMouseBackend:
+    def press_key(self, key):
+        pyautogui.press(PYAUTOGUI_KEYS.get(key, key))
+
+    def hotkey(self, keys):
+        pyautogui.hotkey(*[PYAUTOGUI_KEYS.get(k, k) for k in keys])
+
+    def key_down(self, key):
+        pyautogui.keyDown(PYAUTOGUI_KEYS.get(key, key))
+
+    def key_up(self, key):
+        pyautogui.keyUp(PYAUTOGUI_KEYS.get(key, key))
+
+
+class WindowsInputBackend:
     """
-    Нативний Win32-бекенд: user32.SetCursorPos + user32.mouse_event.
-    Не потребує сторонніх бібліотек, тому працює навіть якщо pyautogui
-    не потрапив у зібраний .exe або не встановився.
+    Нативний Win32-бекенд (user32 без сторонніх бібліотек):
+    миша — SetCursorPos + mouse_event, клавіатура — keybd_event.
+    Працює навіть якщо pyautogui не потрапив у зібраний .exe або не встановився.
     """
     name = "win32"
 
@@ -81,6 +164,7 @@ class WindowsMouseBackend:
             user32 = ctypes.windll.user32
         self.user32 = user32
 
+    # --- миша ---
     def size(self):
         return (self.user32.GetSystemMetrics(0), self.user32.GetSystemMetrics(1))
 
@@ -110,17 +194,109 @@ class WindowsMouseBackend:
         if clicks:
             self.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, int(clicks) * WHEEL_DELTA, 0)
 
+    # --- клавіатура ---
+    def _key_event(self, vk=0, scan=0, keyup=False, extended=False, unicode_char=False):
+        flags = 0
+        if extended:
+            flags |= KEYEVENTF_EXTENDEDKEY
+        if unicode_char:
+            flags |= KEYEVENTF_UNICODE
+        if keyup:
+            flags |= KEYEVENTF_KEYUP
+        self.user32.keybd_event(vk, scan, flags, 0)
 
-_mouse_backend = None
-_mouse_backend_ready = False
+    def _named_key(self, key):
+        """Повертає (vk, extended, потрібен_shift) або None, якщо ключ невідомий."""
+        if key in VK_CODES:
+            return VK_CODES[key], key in EXTENDED_KEYS, False
+        if len(key) == 1:
+            if key.isascii() and key.isalnum():
+                return ord(key.upper()), False, key.isupper()
+            try:
+                code = self.user32.VkKeyScanW(ord(key))
+            except Exception:
+                code = -1
+            if code is not None and code != -1:
+                return code & 0xFF, False, bool((code >> 8) & 1)
+        return None
+
+    def type_text(self, text) -> int:
+        """Друкує текст через KEYEVENTF_UNICODE — тому працює будь-яка мова, включно з кирилицею."""
+        for ch in text:
+            if ch == "\r":
+                continue
+            if ch == "\n":
+                self.press_key("enter")
+                continue
+            if ch == "\t":
+                self.press_key("tab")
+                continue
+            # Кодуємо у UTF-16, щоб коректно відправити навіть емодзі (сурогатні пари)
+            units = ch.encode("utf-16-le")
+            for i in range(0, len(units), 2):
+                unit = int.from_bytes(units[i:i + 2], "little")
+                self._key_event(scan=unit, unicode_char=True)
+                self._key_event(scan=unit, keyup=True, unicode_char=True)
+            time.sleep(0.004)
+        return 0
+
+    def press_key(self, key):
+        if key not in VK_CODES:
+            # Одиничний символ (літера, цифра, кирилиця, пунктуація) — друкуємо юнікодом
+            self.type_text(key)
+            return
+        vk, extended, shift = self._named_key(key)
+        if shift:
+            self._key_event(VK_CODES["shift"])
+        self._key_event(vk, extended=extended)
+        self._key_event(vk, keyup=True, extended=extended)
+        if shift:
+            self._key_event(VK_CODES["shift"], keyup=True)
+
+    def hotkey(self, keys):
+        """Сполучення клавіш: натискаємо по черзі, відпускаємо у зворотному порядку."""
+        pressed = []
+        auto_shift = "shift" not in keys   # не дублюємо Shift, якщо його вже передали в сполученні
+        try:
+            for key in keys:
+                info = self._named_key(key)
+                if info is None:
+                    raise ValueError(f"Невідома клавіша у сполученні: {key}")
+                vk, extended, shift = info
+                if shift and auto_shift:
+                    self._key_event(VK_CODES["shift"])
+                    pressed.append((VK_CODES["shift"], False))
+                self._key_event(vk, extended=extended)
+                pressed.append((vk, extended))
+        finally:
+            for vk, extended in reversed(pressed):
+                self._key_event(vk, keyup=True, extended=extended)
+
+    def key_down(self, key):
+        info = self._named_key(key)
+        if info is None:
+            raise ValueError(f"Невідома клавіша: {key}")
+        vk, extended, _shift = info
+        self._key_event(vk, extended=extended)
+
+    def key_up(self, key):
+        info = self._named_key(key)
+        if info is None:
+            raise ValueError(f"Невідома клавіша: {key}")
+        vk, extended, _shift = info
+        self._key_event(vk, keyup=True, extended=extended)
 
 
-def create_mouse_backend(sys_name=None, user32=None):
-    """Обирає бекенд: на Windows — нативний Win32, інакше pyautogui."""
+_input_backend = None
+_input_backend_ready = False
+
+
+def create_input_backend(sys_name=None, user32=None):
+    """Обирає бекенд вводу: на Windows — нативний Win32, інакше pyautogui."""
     sys_name = (sys_name or platform.system()).lower()
     if "windows" in sys_name:
         try:
-            return WindowsMouseBackend(user32=user32)
+            return WindowsInputBackend(user32=user32)
         except Exception as e:
             logger.warning(f"Нативний Win32-бекенд недоступний ({e}) — пробуємо pyautogui")
     if HAS_PYAUTOGUI:
@@ -128,16 +304,16 @@ def create_mouse_backend(sys_name=None, user32=None):
     return None
 
 
-def get_mouse_backend():
-    global _mouse_backend, _mouse_backend_ready
-    if not _mouse_backend_ready:
-        _mouse_backend = create_mouse_backend()
-        _mouse_backend_ready = True
-    return _mouse_backend
+def get_input_backend():
+    global _input_backend, _input_backend_ready
+    if not _input_backend_ready:
+        _input_backend = create_input_backend()
+        _input_backend_ready = True
+    return _input_backend
 
 
-def mouse_backend_name():
-    backend = get_mouse_backend()
+def input_backend_name():
+    backend = get_input_backend()
     return backend.name if backend else None
 
 if getattr(sys, 'frozen', False):
@@ -390,8 +566,8 @@ def clamp_rel(value, fallback: float = 0.5) -> float:
 
 
 def screen_size():
-    """Розмір екрана від активного бекенду керування мишею."""
-    backend = get_mouse_backend()
+    """Розмір екрана від активного бекенду вводу."""
+    backend = get_input_backend()
     if backend:
         try:
             return backend.size()
@@ -430,7 +606,7 @@ def perform_mouse_action(action: str, params: dict) -> dict:
     Виконує дію миші на локальному ПК.
     Синхронно (без потоку), щоб порядок подій drag & drop не порушувався.
     """
-    backend = get_mouse_backend()
+    backend = get_input_backend()
     if backend is None:
         return {
             "status": "error",
@@ -477,6 +653,65 @@ def perform_mouse_action(action: str, params: dict) -> dict:
 
     except Exception as e:
         logger.error(f"Помилка дії миші {action}: {e}")
+        return {"status": "error", "message": f"Не вдалося виконати {action}: {e}"}
+
+    return {"status": "ok"}
+
+
+def perform_keyboard_action(action: str, params: dict) -> dict:
+    """Виконує дію клавіатури на локальному ПК (друкування, натискання, сполучення)."""
+    backend = get_input_backend()
+    if backend is None:
+        return {
+            "status": "error",
+            "message": "Немає бекенду керування клавіатурою: ні нативний Win32, ні pyautogui недоступні"
+        }
+
+    try:
+        if action == "key_type":
+            text = params.get("text")
+            if text is None:
+                return {"status": "error", "message": "Не вказано текст"}
+            text = str(text)
+            if len(text) > MAX_TYPE_LENGTH:
+                return {"status": "error", "message": f"Задовгий текст ({len(text)} символів, ліміт {MAX_TYPE_LENGTH})"}
+            if not text:
+                return {"status": "error", "message": "Порожній текст"}
+            skipped = backend.type_text(text) or 0
+            message = f"Надіслано {len(text)} символів"
+            if skipped:
+                message += f" ({skipped} символів не підтримуються цим бекендом)"
+            return {"status": "ok", "message": message, "skipped": skipped}
+
+        key = normalize_key(params.get("key"))
+
+        if action == "key_press":
+            if not key:
+                return {"status": "error", "message": "Не вказано клавішу"}
+            backend.press_key(key)
+
+        elif action == "key_hotkey":
+            keys = [normalize_key(k) for k in (params.get("keys") or [])]
+            keys = [k for k in keys if k]
+            if not keys:
+                return {"status": "error", "message": "Не вказано сполучення клавіш"}
+            backend.hotkey(keys)
+
+        elif action == "key_down":
+            if not key:
+                return {"status": "error", "message": "Не вказано клавішу"}
+            backend.key_down(key)
+
+        elif action == "key_up":
+            if not key:
+                return {"status": "error", "message": "Не вказано клавішу"}
+            backend.key_up(key)
+
+        else:
+            return {"status": "error", "message": f"Невідома дія клавіатури: {action}"}
+
+    except Exception as e:
+        logger.error(f"Помилка дії клавіатури {action}: {e}")
         return {"status": "error", "message": f"Не вдалося виконати {action}: {e}"}
 
     return {"status": "ok"}
@@ -599,6 +834,9 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
         elif action in MOUSE_ACTIONS:
             return perform_mouse_action(action, params)
 
+        elif action in KEYBOARD_ACTIONS:
+            return perform_keyboard_action(action, params)
+
         elif action == "restart":
             asyncio.get_event_loop().call_later(1.0, execute_restart)
             return {"status": "ok", "message": "ПК перезавантажується..."}
@@ -619,9 +857,9 @@ MOUSE_ERROR_THROTTLE = 5.0
 
 
 def should_report_error(action: str) -> bool:
-    """Не даємо клієнту слати одну й ту саму помилку на кожен рух мишi (40 разів на секунду)."""
+    """Не даємо клієнту слати одну й ту саму помилку на кожен рух мишi чи автоповтор клавішi."""
     global _last_mouse_error_at
-    if action != "mouse_move":
+    if action not in THROTTLED_ERROR_ACTIONS:
         return True
     now = time.monotonic()
     if now - _last_mouse_error_at < MOUSE_ERROR_THROTTLE:
@@ -637,8 +875,9 @@ async def heartbeat_sender(websocket):
                 "cpu": psutil.cpu_percent(),
                 "ram": psutil.virtual_memory().percent,
                 "os": platform.system(),
-                # Який бекенд керує мишею: "win32", "pyautogui" або None (керування недоступне)
-                "mouse": mouse_backend_name()
+                # Який бекенд керує вводом: "win32", "pyautogui" або None (керування недоступне)
+                "mouse": input_backend_name(),
+                "keyboard": input_backend_name()
             }
             await websocket.send(json.dumps({"type": "heartbeat", "stats": stats}))
             await asyncio.sleep(5)
@@ -682,7 +921,7 @@ async def run_client():
                             req_id = msg.get("request_id")
                             action = msg.get("action")
                             params = msg.get("params", {})
-                            if action != "mouse_move":
+                            if action not in ("mouse_move", "key_press", "key_down", "key_up"):
                                 logger.info(f"Отримано команду: {action}")
                             result = await execute_action(action, params, websocket=websocket)
 
@@ -711,11 +950,11 @@ async def run_client():
 
 if __name__ == "__main__":
     init_platform()
-    backend = get_mouse_backend()
+    backend = get_input_backend()
     if backend:
-        logger.info(f"Керування мишею: бекенд '{backend.name}'")
+        logger.info(f"Керування мишею та клавіатурою: бекенд '{backend.name}'")
     else:
-        logger.warning("Керування мишею недоступне: не знайдено ні Win32, ні pyautogui")
+        logger.warning("Керування мишею/клавіатурою недоступне: не знайдено ні Win32, ні pyautogui")
     try:
         asyncio.run(run_client())
     except KeyboardInterrupt:
