@@ -15,7 +15,7 @@ from typing import Any, Dict
 
 import psutil
 import websockets
-from PIL import Image, ImageGrab
+from PIL import Image, ImageGrab, ImageDraw
 
 try:
     import mss
@@ -85,9 +85,70 @@ def load_or_create_config() -> dict:
         logger.error(f"Помилка читання {CONFIG_FILE}: {e}")
         return default_config
 
+def get_cursor_pos():
+    """Отримує поточні координати курсору миші."""
+    sys_name = platform.system().lower()
+    if "windows" in sys_name:
+        try:
+            import ctypes
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+            pt = POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+                return pt.x, pt.y
+        except Exception:
+            pass
+    elif "darwin" in sys_name:
+        try:
+            from AppKit import NSEvent, NSScreen
+            loc = NSEvent.mouseLocation()
+            h = NSScreen.mainScreen().frame().size.height
+            return int(loc.x), int(h - loc.y)
+        except Exception:
+            pass
+    try:
+        import pyautogui
+        p = pyautogui.position()
+        return int(p[0]), int(p[1])
+    except Exception:
+        pass
+    return None
+
+def draw_cursor(img, cx: int, cy: int):
+    """Малює контрастний вказівник миші на зображенні."""
+    try:
+        draw = ImageDraw.Draw(img)
+        # Зовнішній чорний контур для чіткості на світлому фоні
+        points_outer = [
+            (cx - 1, cy - 1),
+            (cx - 1, cy + 18),
+            (cx + 4, cy + 13),
+            (cx + 8, cy + 20),
+            (cx + 12, cy + 18),
+            (cx + 8, cy + 12),
+            (cx + 14, cy + 12)
+        ]
+        # Внутрішня біла стрілка
+        points_inner = [
+            (cx, cy),
+            (cx, cy + 15),
+            (cx + 4, cy + 12),
+            (cx + 7, cy + 18),
+            (cx + 10, cy + 17),
+            (cx + 7, cy + 11),
+            (cx + 12, cy + 11)
+        ]
+        draw.polygon(points_outer, fill=(0, 0, 0))
+        draw.polygon(points_inner, fill=(255, 255, 255))
+    except Exception:
+        pass
+
 def get_screenshot_base64() -> str:
     try:
         img = ImageGrab.grab()
+        mouse_pos = get_cursor_pos()
+        if mouse_pos:
+            draw_cursor(img, mouse_pos[0], mouse_pos[1])
         buffer = io.BytesIO()
         img.convert("RGB").save(buffer, format="JPEG", quality=75, optimize=True)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -179,7 +240,7 @@ def show_fullscreen_image(img_bytes: bytes, duration: float):
 is_streaming = False
 stream_task = None
 
-async def stream_loop(websocket, target_fps=12):
+async def stream_loop(websocket, target_fps=8):
     global is_streaming
     logger.info(f"Початок трансляції екрану ({target_fps} FPS)...")
     delay = max(0.04, 1.0 / target_fps)
@@ -187,16 +248,32 @@ async def stream_loop(websocket, target_fps=12):
     try:
         while is_streaming:
             try:
+                offset_x, offset_y = 0, 0
                 if sct:
                     monitor = sct.monitors[1]
+                    offset_x = monitor.get("left", 0)
+                    offset_y = monitor.get("top", 0)
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                 else:
                     img = ImageGrab.grab()
 
+                orig_w, orig_h = img.width, img.height
+                ratio = 1.0
                 if img.width > 960:
                     ratio = 960 / img.width
                     img = img.resize((960, int(img.height * ratio)), Image.Resampling.BILINEAR)
+
+                # Відображення курсору миші
+                mouse_pos = get_cursor_pos()
+                if mouse_pos:
+                    mx, my = mouse_pos
+                    rel_x = mx - offset_x
+                    rel_y = my - offset_y
+                    if 0 <= rel_x < orig_w and 0 <= rel_y < orig_h:
+                        cur_x = int(rel_x * ratio)
+                        cur_y = int(rel_y * ratio)
+                        draw_cursor(img, cur_x, cur_y)
 
                 buf = io.BytesIO()
                 img.convert("RGB").save(buf, format="JPEG", quality=45, optimize=False)
