@@ -55,9 +55,21 @@ app = FastAPI(title="PC Club Manager", lifespan=lifespan)
 WEB_DIR = os.path.join(BASE_DIR, "web")
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 @app.get("/")
 async def get_index():
-    return FileResponse(os.path.join(WEB_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(WEB_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 # --- WebSocket for Club PC Clients ---
 @app.websocket("/ws/client/{pc_name}")

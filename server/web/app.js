@@ -588,19 +588,13 @@ btnSubmitPic.onclick = async () => {
   const duration = parseFloat(inputPicDuration.value) || 10;
   let params = { duration };
 
-  if (activePicMode === 'file') {
-    if (!selectedPicBase64) {
-      showToast('Будь ласка, оберіть фото з галереї!', true);
-      return;
-    }
+  if (selectedPicBase64) {
     params.image_base64 = selectedPicBase64;
+  } else if (inputPicUrl && inputPicUrl.value.trim()) {
+    params.image_url = inputPicUrl.value.trim();
   } else {
-    const url = inputPicUrl.value.trim();
-    if (!url) {
-      showToast('Введіть посилання на зображення!', true);
-      return;
-    }
-    params.image_url = url;
+    showToast('Будь ласка, оберіть фото з галереї або введіть посилання!', true);
+    return;
   }
 
   modalPic.classList.remove('active');
