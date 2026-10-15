@@ -415,6 +415,7 @@ const picPreviewContainer = document.getElementById('picPreviewContainer');
 const picPreviewImg = document.getElementById('picPreviewImg');
 const picPreviewName = document.getElementById('picPreviewName');
 const btnClearPic = document.getElementById('btnClearPic');
+const btnChooseGallery = document.getElementById('btnChooseGallery');
 const inputPicUrl = document.getElementById('inputPicUrl');
 const inputPicDuration = document.getElementById('inputPicDuration');
 const btnCancelPic = document.getElementById('btnCancelPic');
@@ -422,6 +423,13 @@ const btnSubmitPic = document.getElementById('btnSubmitPic');
 
 let activePicMode = 'file';
 let selectedPicBase64 = null;
+
+function triggerFileInput() {
+  setPicMode('file');
+  if (inputPicFile) {
+    inputPicFile.click();
+  }
+}
 
 function setPicMode(mode) {
   activePicMode = mode;
@@ -435,11 +443,28 @@ function setPicMode(mode) {
     tabPicFile.classList.remove('active');
     picUrlSection.style.display = 'block';
     picFileSection.style.display = 'none';
-    inputPicUrl.focus();
+    if (inputPicUrl) inputPicUrl.focus();
   }
 }
 
-if (tabPicFile) tabPicFile.onclick = () => setPicMode('file');
+if (tabPicFile) {
+  tabPicFile.onclick = (e) => {
+    e.preventDefault();
+    setPicMode('file');
+    // Якщо фото ще не обрано — одразу відкриваємо системну галерею
+    if (!selectedPicBase64) {
+      triggerFileInput();
+    }
+  };
+}
+
+if (btnChooseGallery) {
+  btnChooseGallery.onclick = (e) => {
+    e.preventDefault();
+    triggerFileInput();
+  };
+}
+
 if (tabPicUrl) tabPicUrl.onclick = () => setPicMode('url');
 
 // Обробка файлу з галереї та компресія до Full HD для надшвидкої передачі
@@ -479,6 +504,7 @@ function processImageFile(file) {
       picPreviewName.textContent = file.name || 'Фото з галереї';
       picPreviewContainer.style.display = 'flex';
       picDropzone.style.display = 'none';
+      if (btnChooseGallery) btnChooseGallery.style.display = 'none';
     };
     img.src = e.target.result;
   };
@@ -491,6 +517,7 @@ function clearPicPreview() {
   picPreviewImg.src = '';
   picPreviewContainer.style.display = 'none';
   picDropzone.style.display = 'flex';
+  if (btnChooseGallery) btnChooseGallery.style.display = 'block';
 }
 
 if (btnClearPic) btnClearPic.onclick = clearPicPreview;

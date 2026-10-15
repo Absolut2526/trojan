@@ -177,12 +177,15 @@
 
         <!-- 1. Секція завантаження фото з галереї -->
         <div id="picFileSection" class="pic-section">
-          <input type="file" id="inputPicFile" accept="image/*" style="display: none;" />
-          <label for="inputPicFile" class="file-dropzone" id="picDropzone">
+          <div class="file-dropzone" id="picDropzone">
+            <input type="file" id="inputPicFile" accept="image/*" class="hidden-file-input" />
             <div class="dropzone-icon">📷</div>
             <div class="dropzone-title">Натисніть для вибору з галереї</div>
             <div class="dropzone-sub">або перетягніть файл сюди (JPG, PNG, WEBP)</div>
-          </label>
+          </div>
+          <button type="button" class="btn btn-primary" id="btnChooseGallery" style="width: 100%; margin-top: 10px; min-height: 46px; font-size: 15px; font-weight: 600;">
+            📁 Відкрити галерею фото
+          </button>
           <div id="picPreviewContainer" class="pic-preview-container" style="display: none;">
             <img id="picPreviewImg" class="pic-preview-img" alt="Прев'ю фото" />
             <div class="pic-preview-bar">
