@@ -403,12 +403,139 @@ window.confirmShutdown = async (pcName) => {
   }
 };
 
-// 🖼 Fullscreen Image Modal
+// 🖼 Fullscreen Image Modal (Підтримка фото з галереї або посилання)
 const modalPic = document.getElementById('modalPic');
+const tabPicFile = document.getElementById('tabPicFile');
+const tabPicUrl = document.getElementById('tabPicUrl');
+const picFileSection = document.getElementById('picFileSection');
+const picUrlSection = document.getElementById('picUrlSection');
+const inputPicFile = document.getElementById('inputPicFile');
+const picDropzone = document.getElementById('picDropzone');
+const picPreviewContainer = document.getElementById('picPreviewContainer');
+const picPreviewImg = document.getElementById('picPreviewImg');
+const picPreviewName = document.getElementById('picPreviewName');
+const btnClearPic = document.getElementById('btnClearPic');
 const inputPicUrl = document.getElementById('inputPicUrl');
 const inputPicDuration = document.getElementById('inputPicDuration');
 const btnCancelPic = document.getElementById('btnCancelPic');
 const btnSubmitPic = document.getElementById('btnSubmitPic');
+
+let activePicMode = 'file';
+let selectedPicBase64 = null;
+
+function setPicMode(mode) {
+  activePicMode = mode;
+  if (mode === 'file') {
+    tabPicFile.classList.add('active');
+    tabPicUrl.classList.remove('active');
+    picFileSection.style.display = 'block';
+    picUrlSection.style.display = 'none';
+  } else {
+    tabPicUrl.classList.add('active');
+    tabPicFile.classList.remove('active');
+    picUrlSection.style.display = 'block';
+    picFileSection.style.display = 'none';
+    inputPicUrl.focus();
+  }
+}
+
+if (tabPicFile) tabPicFile.onclick = () => setPicMode('file');
+if (tabPicUrl) tabPicUrl.onclick = () => setPicMode('url');
+
+// Обробка файлу з галереї та компресія до Full HD для надшвидкої передачі
+function processImageFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    showToast('Будь ласка, оберіть файл зображення (фото)', true);
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      // Максимальна роздільна здатність 1920x1080 (збереження пропорцій)
+      const MAX_W = 1920;
+      const MAX_H = 1080;
+      let w = img.width;
+      let h = img.height;
+
+      if (w > MAX_W || h > MAX_H) {
+        const ratio = Math.min(MAX_W / w, MAX_H / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+
+      // Конвертуємо в оптимізований JPEG 85%
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      selectedPicBase64 = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+
+      picPreviewImg.src = dataUrl;
+      picPreviewName.textContent = file.name || 'Фото з галереї';
+      picPreviewContainer.style.display = 'flex';
+      picDropzone.style.display = 'none';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearPicPreview() {
+  selectedPicBase64 = null;
+  if (inputPicFile) inputPicFile.value = '';
+  picPreviewImg.src = '';
+  picPreviewContainer.style.display = 'none';
+  picDropzone.style.display = 'flex';
+}
+
+if (btnClearPic) btnClearPic.onclick = clearPicPreview;
+
+if (inputPicFile) {
+  inputPicFile.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) processImageFile(file);
+  });
+}
+
+// Drag & drop на зону завантаження
+if (picDropzone) {
+  picDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    picDropzone.classList.add('dragover');
+  });
+  picDropzone.addEventListener('dragleave', () => {
+    picDropzone.classList.remove('dragover');
+  });
+  picDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    picDropzone.classList.remove('dragover');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) processImageFile(file);
+  });
+}
+
+// Швидкі кнопки тривалості (5с, 10с, 30с, 60с)
+document.querySelectorAll('.duration-presets .preset-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.duration-presets .preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    inputPicDuration.value = btn.getAttribute('data-sec');
+  };
+});
+
+if (inputPicDuration) {
+  inputPicDuration.addEventListener('input', () => {
+    const currentVal = inputPicDuration.value;
+    document.querySelectorAll('.duration-presets .preset-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-sec') === currentVal);
+    });
+  });
+}
 
 window.openPicModal = (pcName) => {
   if (pcName === 'ALL') {
@@ -420,37 +547,50 @@ window.openPicModal = (pcName) => {
   }
   currentTargetPc = pcName;
   document.getElementById('picTitle').textContent = pcName === 'ALL' 
-    ? '🖼 Показати картинку на ВСІ комп\'ютери' 
-    : `🖼 Показати картинку: ${getDisplayPcTitle(pcName)}`;
-  inputPicUrl.value = '';
-  inputPicDuration.value = '10';
+    ? '🖼 Показати фото на ВСІ комп\'ютери' 
+    : `🖼 Показати фото: ${getDisplayPcTitle(pcName)}`;
+
+  // За замовчуванням відкриваємо режим галереї
+  setPicMode('file');
   modalPic.classList.add('active');
-  inputPicUrl.focus();
 };
 
 btnCancelPic.onclick = () => modalPic.classList.remove('active');
+
 btnSubmitPic.onclick = async () => {
-  const url = inputPicUrl.value.trim();
   const duration = parseFloat(inputPicDuration.value) || 10;
-  if (!url) {
-    showToast('Введіть посилання на картинку!', true);
-    return;
+  let params = { duration };
+
+  if (activePicMode === 'file') {
+    if (!selectedPicBase64) {
+      showToast('Будь ласка, оберіть фото з галереї!', true);
+      return;
+    }
+    params.image_base64 = selectedPicBase64;
+  } else {
+    const url = inputPicUrl.value.trim();
+    if (!url) {
+      showToast('Введіть посилання на зображення!', true);
+      return;
+    }
+    params.image_url = url;
   }
+
   modalPic.classList.remove('active');
 
   if (currentTargetPc === 'ALL') {
-    showToast(`Відправляю картинку на ВСІ ПК (${duration}с)...`);
-    const res = await sendBroadcastCommand('show_image', { image_url: url, duration });
+    showToast(`Відправляю фото на ВСІ увімкнені ПК (${duration}с)...`);
+    const res = await sendBroadcastCommand('show_image', params);
     if (res.status === 'ok') {
-      showToast(`Картинку виведено на ${res.count || 0} ПК!`);
+      showToast(`Фото успішно виведено на ${res.count || 0} ПК!`);
     } else {
       showToast(`Помилка: ${res.message}`, true);
     }
   } else {
-    showToast(`Відправляю картинку на ${currentTargetPc} (${duration}с)...`);
-    const res = await sendCommand(currentTargetPc, 'show_image', { image_url: url, duration });
+    showToast(`Відправляю фото на ${currentTargetPc} (${duration}с)...`);
+    const res = await sendCommand(currentTargetPc, 'show_image', params);
     if (res.status === 'ok') {
-      showToast(`Картинку відкрито на ${currentTargetPc}!`);
+      showToast(`Фото відкрито на ${currentTargetPc}!`);
     } else {
       showToast(`Помилка: ${res.message}`, true);
     }
