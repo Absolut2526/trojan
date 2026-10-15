@@ -87,6 +87,12 @@ body {
   background-color: var(--accent-green);
   border-radius: 50%;
   box-shadow: 0 0 8px var(--accent-green);
+  transition: all 0.3s ease;
+}
+
+.status-dot.offline {
+  background-color: var(--accent-red);
+  box-shadow: 0 0 8px var(--accent-red);
 }
 
 .pc-grid {
@@ -131,11 +137,32 @@ body {
   gap: 10px;
 }
 
+.pc-order-badge {
+  background: linear-gradient(135deg, #0284c7, #2563eb);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+  flex-shrink: 0;
+}
+
 .pc-name {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   color: #fff;
   letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pc-hw-tag {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .pc-badge {

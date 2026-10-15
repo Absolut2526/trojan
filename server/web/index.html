@@ -21,8 +21,8 @@
       </div>
       <div class="header-right">
         <div class="stat-badge">
-          <span class="status-dot"></span>
-          <span id="statOnline">Онлайн: 0 / 0</span>
+          <span class="status-dot offline" id="statDot"></span>
+          <span id="statOnline">Онлайн: 0</span>
         </div>
         <button class="btn btn-primary" onclick="openUrlModal('ALL')">🌐 URL на ВСІ</button>
         <button class="btn btn-primary" onclick="openPicModal('ALL')">🖼 Картинка на ВСІ</button>
@@ -34,7 +34,11 @@
 
     <main class="main-content">
       <div id="pcGrid" class="pc-grid">
-        <div class="empty-state">Очікування підключення комп'ютерів клубу...</div>
+        <div class="empty-state">
+          <div style="font-size: 42px; margin-bottom: 12px; opacity: 0.7;">🔌</div>
+          <div style="font-weight: 700; font-size: 19px; color: var(--text-main); margin-bottom: 8px;">Усі комп'ютери вимкнені</div>
+          <div style="font-size: 14px; color: var(--text-muted);">Комп'ютер автоматично з'явиться тут під першим номером, щойно його увімкнуть.</div>
+        </div>
       </div>
     </main>
   </div>

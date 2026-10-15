@@ -1,14 +1,13 @@
 import asyncio
 import json
 import logging
+import os
+import time
 import uuid
 from typing import Dict, Any, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
-
-import os
-import json
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcs_registry.json")
 
@@ -75,15 +74,21 @@ class ConnectionManager:
             except Exception:
                 pass
         await websocket.accept()
+        now = time.time()
         self.active_clients[pc_name] = websocket
         self.client_info[pc_name] = {
             "name": pc_name,
             "status": "online",
-            "info": initial_info or {},
-            "connected_at": asyncio.get_event_loop().time()
+            "info": initial_info or self.client_info.get(pc_name, {}).get("info", {}),
+            "connected_at": now
         }
         logger.info(f"Client '{pc_name}' connected.")
-        await self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "online"})
+        await self.broadcast_to_dashboards({
+            "type": "pc_status_change",
+            "pc": pc_name,
+            "status": "online",
+            "connected_at": now
+        })
 
     def disconnect_client(self, pc_name: str, websocket: Optional[WebSocket] = None):
         if pc_name in self.active_clients:
@@ -91,6 +96,7 @@ class ConnectionManager:
                 del self.active_clients[pc_name]
                 if pc_name in self.client_info:
                     self.client_info[pc_name]["status"] = "offline"
+                    self.client_info[pc_name]["connected_at"] = None
                 logger.info(f"Client '{pc_name}' disconnected.")
                 asyncio.create_task(
                     self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "offline"})
@@ -102,10 +108,12 @@ class ConnectionManager:
     def get_all_pcs(self) -> Dict[str, Dict[str, Any]]:
         result = {}
         for name, data in self.client_info.items():
+            is_online = name in self.active_clients
             result[name] = {
                 "name": name,
-                "status": "online" if name in self.active_clients else "offline",
-                "info": data.get("info", {})
+                "status": "online" if is_online else "offline",
+                "info": data.get("info", {}),
+                "connected_at": data.get("connected_at") if is_online else None
             }
         return result
 
