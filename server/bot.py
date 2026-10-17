@@ -34,14 +34,48 @@ def is_authorized(event: Union[types.Message, types.CallbackQuery]) -> bool:
 
     return (chat_id in allowed) or (user_id in allowed)
 
-def get_pc_list_keyboard() -> InlineKeyboardMarkup:
+def get_online_pcs():
+    """Повертає список онлайн комп'ютерів, відсортований за номером як на сайті."""
     pcs = manager.get_all_pcs()
+    online = [(name, data) for name, data in pcs.items() if data.get("status") == "online"]
+
+    def sort_key(item):
+        name = item[0]
+        digits = "".join(ch for ch in name if ch.isdigit())
+        num = int(digits) if digits else 0
+        return (num, name)
+
+    return sorted(online, key=sort_key)
+
+def build_main_menu_text() -> str:
+    online_pcs = get_online_pcs()
+    online_count = len(online_pcs)
+
+    if online_count == 0:
+        return (
+            "🎮 <b>Панель керування ПК-клубом</b>\n\n"
+            "🔌 <b>Усі комп'ютери вимкнені</b>\n"
+            "Комп'ютер автоматично з'явиться тут, щойно його увімкнуть.\n\n"
+            "📊 Онлайн: <b>0</b> комп'ютерів"
+        )
+
+    return (
+        "🎮 <b>Панель керування ПК-клубом</b>\n\n"
+        f"📊 Онлайн: <b>{online_count}</b> комп'ютерів\n\n"
+        "Оберіть ПК зі списку нижче або скористайтесь швидкими командами:\n"
+        "• <code>/screen PC-01</code> — скріншот\n"
+        "• <code>/open PC-01 https://url</code> — відкрити сайт\n"
+        "• <code>/kill PC-01 dota2.exe</code> — закрити процес\n"
+        "• <code>/procs PC-01</code> — список процесів"
+    )
+
+def get_pc_list_keyboard() -> InlineKeyboardMarkup:
+    online_pcs = get_online_pcs()
     buttons = []
     row = []
 
-    for name, data in sorted(pcs.items()):
-        status_icon = "🟢" if data["status"] == "online" else "🔴"
-        btn_text = f"{status_icon} {name}"
+    for idx, (name, data) in enumerate(online_pcs, start=1):
+        btn_text = f"🟢 №{idx} ({name})"
         row.append(InlineKeyboardButton(text=btn_text, callback_data=f"pc:{name}"))
         if len(row) == 2:
             buttons.append(row)
@@ -50,14 +84,15 @@ def get_pc_list_keyboard() -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
 
-    buttons.append([
-        InlineKeyboardButton(text="🔄 Рестарт ВСІХ", callback_data="mass:restart_confirm"),
-        InlineKeyboardButton(text="⏻ Вимкнути ВСІ", callback_data="mass:shutdown_confirm")
-    ])
+    if online_pcs:
+        buttons.append([
+            InlineKeyboardButton(text="🔄 Рестарт ВСІХ", callback_data="mass:restart_confirm"),
+            InlineKeyboardButton(text="⏻ Вимкнути ВСІ", callback_data="mass:shutdown_confirm")
+        ])
     buttons.append([InlineKeyboardButton(text="🔄 Оновити список", callback_data="refresh_list")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_pc_actions_keyboard(pc_name: str, is_online: bool) -> InlineKeyboardMarkup:
+def get_pc_actions_keyboard(pc_name: str, is_online: bool = True) -> InlineKeyboardMarkup:
     if not is_online:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 До списку ПК", callback_data="back_to_list")]
@@ -90,19 +125,7 @@ async def cmd_start(message: types.Message):
     if not is_authorized(message):
         return
 
-    pcs = manager.get_all_pcs()
-    online_count = sum(1 for p in pcs.values() if p["status"] == "online")
-    total_count = len(pcs)
-
-    text = (
-        "🎮 <b>Панель керування ПК-клубом</b>\n\n"
-        f"📊 Онлайн: <b>{online_count}/{total_count}</b> комп'ютерів\n\n"
-        "Оберіть ПК зі списку нижче або скористайтесь швидкими командами:\n"
-        "• <code>/screen PC-01</code> — скріншот\n"
-        "• <code>/open PC-01 https://url</code> — відкрити сайт\n"
-        "• <code>/kill PC-01 dota2.exe</code> — закрити процес\n"
-        "• <code>/procs PC-01</code> — список процесів"
-    )
+    text = build_main_menu_text()
     await message.answer(text, parse_mode="HTML", reply_markup=get_pc_list_keyboard())
 
 # --- Швидкі команди для груп (/screen, /open, /kill, /procs, /restart, /shutdown) ---
@@ -193,15 +216,7 @@ async def cb_refresh_list(callback: types.CallbackQuery):
         await callback.answer("⛔ Доступ заборонено", show_alert=True)
         return
 
-    pcs = manager.get_all_pcs()
-    online_count = sum(1 for p in pcs.values() if p["status"] == "online")
-    total_count = len(pcs)
-
-    text = (
-        "🎮 <b>Панель керування ПК-клубом</b>\n\n"
-        f"📊 Онлайн: <b>{online_count}/{total_count}</b> комп'ютерів\n\n"
-        "Оберіть ПК зі списку нижче для виконання дій:"
-    )
+    text = build_main_menu_text()
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_pc_list_keyboard())
     except Exception:
@@ -221,7 +236,23 @@ async def cb_pc_detail(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     pc_name = callback.data.split(":")[1]
     is_online = manager.is_online(pc_name)
-    status_text = "🟢 Онлайн" if is_online else "🔴 Офлайн"
+
+    if not is_online:
+        await callback.answer("⚠️ Цей комп'ютер зараз вимкнений", show_alert=True)
+        try:
+            await callback.message.edit_text(build_main_menu_text(), parse_mode="HTML", reply_markup=get_pc_list_keyboard())
+        except Exception:
+            pass
+        return
+
+    online_pcs = get_online_pcs()
+    order_idx = None
+    for idx, (name, _) in enumerate(online_pcs, start=1):
+        if name == pc_name:
+            order_idx = idx
+            break
+
+    title = f"№{order_idx} ({pc_name})" if order_idx else pc_name
 
     info = manager.client_info.get(pc_name, {}).get("info", {})
     cpu = info.get("cpu", "н/д")
@@ -229,19 +260,17 @@ async def cb_pc_detail(callback: types.CallbackQuery, state: FSMContext):
     os_name = info.get("os", "Windows")
 
     text = (
-        f"🖥 <b>Комп'ютер: {pc_name}</b>\n"
-        f"Статус: <b>{status_text}</b>\n"
+        f"🖥 <b>Комп'ютер {title}</b>\n"
+        f"Статус: <b>🟢 Онлайн</b>\n"
         f"ОС: {os_name}\n"
+        f"CPU: {cpu}% | RAM: {ram}%\n\n"
+        "Оберіть дію:"
     )
-    if is_online:
-        text += f"CPU: {cpu}% | RAM: {ram}%\n"
-
-    text += "\nОберіть дію:"
 
     await callback.message.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=get_pc_actions_keyboard(pc_name, is_online)
+        reply_markup=get_pc_actions_keyboard(pc_name, is_online=True)
     )
     await callback.answer()
 
