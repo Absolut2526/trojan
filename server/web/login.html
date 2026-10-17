@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вхід | PC CLUB MANAGER</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261017_auth">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="login-body">
+  <div class="login-wrapper">
+    <div class="login-card" id="loginCard">
+      <div class="login-header">
+        <div class="login-logo">🎮</div>
+        <h1 class="login-title">PC CLUB MANAGER</h1>
+        <p class="login-subtitle">Центр керування та моніторингу комп'ютерів</p>
+      </div>
+
+      <form class="login-form" id="loginForm" onsubmit="handleLogin(event)">
+        <div class="login-field">
+          <label for="loginPassword">Пароль адміністратора</label>
+          <div class="login-input-wrap">
+            <span class="field-icon">🔒</span>
+            <input
+              type="password"
+              id="loginPassword"
+              name="password"
+              class="login-input"
+              placeholder="Введіть пароль..."
+              autocomplete="current-password"
+              required
+              autofocus
+            />
+            <button
+              type="button"
+              class="btn-toggle-pwd"
+              id="btnTogglePwd"
+              title="Показати/приховати пароль"
+              onclick="togglePasswordVisibility()"
+            >
+              👁️
+            </button>
+          </div>
+        </div>
+
+        <div class="login-alert" id="loginAlert">
+          <span>⚠️</span>
+          <span id="loginAlertText">Невірний пароль. Спробуйте ще раз.</span>
+        </div>
+
+        <button type="submit" class="btn-submit-login" id="btnLoginSubmit">
+          <span id="btnLoginIcon">🔑</span>
+          <span id="btnLoginText">Увійти в систему</span>
+        </button>
+      </form>
+
+      <div class="login-footer-note">
+        Захищений доступ до панелі керування ПК
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function togglePasswordVisibility() {
+      const input = document.getElementById('loginPassword');
+      const btn = document.getElementById('btnTogglePwd');
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = '🙈';
+      } else {
+        input.type = 'password';
+        btn.textContent = '👁️';
+      }
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const pwdInput = document.getElementById('loginPassword');
+      const password = pwdInput.value;
+      const submitBtn = document.getElementById('btnLoginSubmit');
+      const btnText = document.getElementById('btnLoginText');
+      const btnIcon = document.getElementById('btnLoginIcon');
+      const alertEl = document.getElementById('loginAlert');
+      const alertText = document.getElementById('loginAlertText');
+      const card = document.getElementById('loginCard');
+
+      if (!password) {
+        pwdInput.focus();
+        return;
+      }
+
+      // Hide error
+      alertEl.classList.remove('show');
+      card.classList.remove('shake');
+
+      // Loading state
+      submitBtn.disabled = true;
+      btnIcon.textContent = '⏳';
+      btnText.textContent = 'Перевірка...';
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          btnIcon.textContent = '✅';
+          btnText.textContent = 'Успішно! Входимо...';
+          // Redirect to main dashboard
+          window.location.href = '/';
+        } else {
+          submitBtn.disabled = false;
+          btnIcon.textContent = '🔑';
+          btnText.textContent = 'Увійти в систему';
+          
+          alertText.textContent = data.detail || 'Невірний пароль. Спробуйте ще раз.';
+          alertEl.classList.add('show');
+          card.classList.add('shake');
+          
+          pwdInput.value = '';
+          pwdInput.focus();
+          
+          setTimeout(() => {
+            card.classList.remove('shake');
+          }, 500);
+        }
+      } catch (err) {
+        submitBtn.disabled = false;
+        btnIcon.textContent = '🔑';
+        btnText.textContent = 'Увійти в систему';
+        alertText.textContent = 'Помилка підключення до сервера';
+        alertEl.classList.add('show');
+      }
+    }
+  </script>
+</body>
+</html>

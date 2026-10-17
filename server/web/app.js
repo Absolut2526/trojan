@@ -64,6 +64,10 @@ window.onclick = (event) => {
 async function fetchPcs() {
   try {
     const res = await fetch('/api/pcs');
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
     if (!res.ok) throw new Error('Помилка сервера');
     const data = await res.json();
     activePcs = data;
@@ -236,6 +240,10 @@ async function sendCommand(pcName, action, params = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, params })
     });
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return { status: 'error', message: 'Потрібна авторизація' };
+    }
     return await res.json();
   } catch (err) {
     return { status: 'error', message: err.message };
@@ -250,6 +258,10 @@ async function sendBroadcastCommand(action, params = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, params })
     });
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return { status: 'error', message: 'Потрібна авторизація' };
+    }
     return await res.json();
   } catch (err) {
     return { status: 'error', message: err.message };
@@ -1041,10 +1053,25 @@ function setupDashboardWebSocket() {
     } catch (e) {}
   };
 
-  dashboardSocket.onclose = () => {
+  dashboardSocket.onclose = (event) => {
+    if (event && event.code === 1008) {
+      window.location.href = '/login';
+      return;
+    }
     setTimeout(setupDashboardWebSocket, 3000);
   };
 }
+
+// Функція виходу з панелі керування
+async function logout() {
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+  } catch (err) {
+    console.error('Logout error:', err);
+  }
+  window.location.href = '/login';
+}
+window.logout = logout;
 
 btnRefresh.onclick = fetchPcs;
 

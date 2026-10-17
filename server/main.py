@@ -1,8 +1,11 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -11,8 +14,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status, Request, Depends
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,6 +27,44 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 bot_polling_task = None
+
+AUTH_COOKIE_NAME = "pc_club_session"
+
+def _get_session_secret() -> bytes:
+    pwd = config.DASHBOARD_PASSWORD or "admin123"
+    return hashlib.sha256(f"pc_club_session_salt_{pwd}".encode()).digest()
+
+def create_session_token() -> str:
+    # 30 days validity
+    expires_at = int(time.time()) + 30 * 86400
+    payload = str(expires_at).encode()
+    signature = hmac.new(_get_session_secret(), payload, hashlib.sha256).hexdigest()
+    return f"{expires_at}.{signature}"
+
+def verify_session_token(token: Optional[str]) -> bool:
+    if not token or "." not in token:
+        return False
+    try:
+        expires_at_str, signature = token.split(".", 1)
+        expires_at = int(expires_at_str)
+        if time.time() > expires_at:
+            return False
+        expected_sig = hmac.new(_get_session_secret(), str(expires_at).encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected_sig)
+    except Exception:
+        return False
+
+def require_dashboard_auth(request: Request):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    if not verify_session_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Потрібна авторизація"
+        )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,20 +97,66 @@ WEB_DIR = os.path.join(BASE_DIR, "web")
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 @app.middleware("http")
-async def add_no_cache_header(request, call_next):
+async def add_no_cache_header(request: Request, call_next):
+    # Prevent direct static access to index.html or login.html without routing
+    if request.url.path in ("/static/index.html", "/static/login.html"):
+        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
     response = await call_next(request)
-    if request.url.path.startswith("/static/") or request.url.path == "/":
+    if request.url.path.startswith("/static/") or request.url.path in ("/", "/login"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
 
 @app.get("/")
-async def get_index():
+async def get_index(request: Request):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not verify_session_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
     return FileResponse(
         os.path.join(WEB_DIR, "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
     )
+
+@app.get("/login")
+async def get_login(request: Request):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if verify_session_token(token):
+        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    return FileResponse(
+        os.path.join(WEB_DIR, "login.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
+
+class LoginRequest(BaseModel):
+    password: str
+
+@app.post("/api/login")
+async def api_login(req: LoginRequest):
+    expected_password = config.DASHBOARD_PASSWORD or "admin123"
+    if not hmac.compare_digest(req.password.strip(), expected_password.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невірний пароль. Спробуйте ще раз."
+        )
+    token = create_session_token()
+    response = JSONResponse(content={"status": "ok", "message": "Авторизація успішна"})
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=30 * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
+    return response
+
+@app.post("/api/logout")
+async def api_logout():
+    response = JSONResponse(content={"status": "ok", "message": "Вихід виконано"})
+    response.delete_cookie(key=AUTH_COOKIE_NAME)
+    return response
 
 # --- WebSocket for Club PC Clients ---
 @app.websocket("/ws/client/{pc_name}")
@@ -147,6 +234,12 @@ async def websocket_client_endpoint(
 # --- WebSocket for Dashboard ---
 @app.websocket("/ws/dashboard")
 async def websocket_dashboard_endpoint(websocket: WebSocket):
+    token = websocket.cookies.get(AUTH_COOKIE_NAME) or websocket.query_params.get("token")
+    if not verify_session_token(token):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        logger.warning("Rejected dashboard WebSocket connection: unauthorized.")
+        return
+
     await manager.connect_dashboard(websocket)
     # При підключенні дашборду гарантуємо, що всі онлайн ПК транслюють екран
     for active_pc in list(manager.active_clients.keys()):
@@ -176,7 +269,7 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
         manager.disconnect_dashboard(websocket)
 
 # --- REST APIs for Web UI ---
-@app.get("/api/pcs")
+@app.get("/api/pcs", dependencies=[Depends(require_dashboard_auth)])
 async def api_get_pcs():
     return manager.get_all_pcs()
 
@@ -184,12 +277,12 @@ class CommandRequest(BaseModel):
     action: str
     params: Dict[str, Any] = {}
 
-@app.post("/api/pcs/broadcast/command")
+@app.post("/api/pcs/broadcast/command", dependencies=[Depends(require_dashboard_auth)])
 async def api_broadcast_command(req: CommandRequest):
     result = await manager.send_broadcast_command(req.action, req.params)
     return result
 
-@app.post("/api/pcs/{pc_name}/command")
+@app.post("/api/pcs/{pc_name}/command", dependencies=[Depends(require_dashboard_auth)])
 async def api_send_command(pc_name: str, req: CommandRequest):
     if not manager.is_online(pc_name):
         raise HTTPException(status_code=400, detail=f"Комп'ютер '{pc_name}' не в мережі.")

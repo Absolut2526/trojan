@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Керування ПК Клубом | Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261015_02">
+  <link rel="stylesheet" href="/static/styles.css?v=20261017_auth">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -26,6 +26,7 @@
             <span id="statOnline">Онлайн: 0</span>
           </div>
           <button id="btnRefresh" class="btn btn-secondary" title="Оновити список">🔄 <span>Оновити</span></button>
+          <button id="btnLogout" class="btn btn-secondary" onclick="logout()" title="Вийти з панелі">🚪 <span>Вийти</span></button>
         </div>
         <div class="header-actions-group">
           <button class="btn btn-primary" onclick="openUrlModal('ALL')">🌐 URL на ВСІ</button>
@@ -225,6 +226,6 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="/static/app.js?v=20261015_02"></script>
+  <script src="/static/app.js?v=20261017_auth"></script>
 </body>
 </html>

