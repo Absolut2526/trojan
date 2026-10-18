@@ -26,6 +26,13 @@ const inputKillName = document.getElementById('inputKillName');
 const btnSubmitKill = document.getElementById('btnSubmitKill');
 const btnCancelKill = document.getElementById('btnCancelKill');
 
+const modalRename = document.getElementById('modalRename');
+const renameTitle = document.getElementById('renameTitle');
+const inputRenameName = document.getElementById('inputRenameName');
+const btnSubmitRename = document.getElementById('btnSubmitRename');
+const btnCancelRename = document.getElementById('btnCancelRename');
+let renameTargetPc = null;
+
 const modalStream = document.getElementById('modalStream');
 const streamImg = document.getElementById('streamImg');
 const streamSpinner = document.getElementById('streamSpinner');
@@ -88,11 +95,15 @@ function getDisplayPcTitle(pcName) {
 }
 
 function buildCardHtml(name, orderNum, osName, cpu, ram) {
+  const safeName = (name || '').replace(/'/g, "\\'");
   return `
     <div class="pc-card-header">
       <div class="pc-title-box">
         <span class="pc-order-badge" id="order-badge-${name}">№${orderNum}</span>
-        <div class="pc-name" id="name-${name}">🖥 Комп'ютер №${orderNum} <span class="pc-hw-tag">(${name})</span></div>
+        <div class="pc-name" id="name-${name}">
+          <span class="pc-name-text">🖥 ${name}</span>
+          <button class="btn-rename-icon" onclick="openRenameModal('${safeName}')" title="Перейменувати комп'ютер">✏️</button>
+        </div>
         <div class="pc-badge badge-online" id="badge-${name}">
           <span class="status-dot"></span> Онлайн
         </div>
@@ -135,7 +146,11 @@ function updateCard(card, name, orderNum, osName, cpu, ram) {
 
   const nameEl = document.getElementById(`name-${name}`);
   if (nameEl) {
-    nameEl.innerHTML = `🖥 Комп'ютер №${orderNum} <span class="pc-hw-tag">(${name})</span>`;
+    const safeName = (name || '').replace(/'/g, "\\'");
+    nameEl.innerHTML = `
+      <span class="pc-name-text">🖥 ${name}</span>
+      <button class="btn-rename-icon" onclick="openRenameModal('${safeName}')" title="Перейменувати комп'ютер">✏️</button>
+    `;
   }
 
   // Оновлюємо показники навантаження
@@ -414,6 +429,90 @@ window.confirmShutdown = async (pcName) => {
     if (res.status !== 'ok') showToast(res.message, true);
   }
 };
+
+// ✏️ Rename PC Modal
+window.openRenameModal = (pcName) => {
+  renameTargetPc = pcName;
+  if (renameTitle) {
+    renameTitle.textContent = `✏️ Перейменувати: ${pcName}`;
+  }
+  if (inputRenameName) {
+    inputRenameName.value = pcName;
+  }
+  if (modalRename) {
+    modalRename.classList.add('active');
+    setTimeout(() => {
+      inputRenameName.focus();
+      inputRenameName.select();
+    }, 80);
+  }
+};
+
+if (btnCancelRename) {
+  btnCancelRename.onclick = () => {
+    if (modalRename) modalRename.classList.remove('active');
+  };
+}
+
+async function submitRename() {
+  if (!renameTargetPc) return;
+  const newName = (inputRenameName.value || '').trim();
+  if (!newName) {
+    showToast('Введіть нову назву для комп\'ютера', true);
+    return;
+  }
+  if (newName === renameTargetPc) {
+    if (modalRename) modalRename.classList.remove('active');
+    return;
+  }
+
+  if (btnSubmitRename) {
+    btnSubmitRename.disabled = true;
+    btnSubmitRename.textContent = 'Збереження...';
+  }
+
+  try {
+    const res = await fetch(`/api/pcs/${encodeURIComponent(renameTargetPc)}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_name: newName })
+    });
+    const data = await res.json();
+    if (res.ok && data.status === 'ok') {
+      showToast(data.message || `ПК успішно перейменовано на ${newName}`);
+      if (modalRename) modalRename.classList.remove('active');
+      if (activeStreamPc === renameTargetPc) {
+        activeStreamPc = newName;
+      }
+      if (currentTargetPc === renameTargetPc) {
+        currentTargetPc = newName;
+      }
+      await fetchPcs();
+    } else {
+      showToast(data.detail || data.message || 'Помилка при перейменуванні', true);
+    }
+  } catch (err) {
+    showToast('Помилка мережі: ' + err.message, true);
+  } finally {
+    if (btnSubmitRename) {
+      btnSubmitRename.disabled = false;
+      btnSubmitRename.textContent = '💾 Зберегти назву';
+    }
+  }
+}
+
+if (btnSubmitRename) {
+  btnSubmitRename.onclick = submitRename;
+}
+
+if (inputRenameName) {
+  inputRenameName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitRename();
+    }
+  });
+}
 
 // 🖼 Fullscreen Image Modal (Підтримка фото з галереї або посилання)
 const modalPic = document.getElementById('modalPic');
@@ -1017,7 +1116,18 @@ function setupDashboardWebSocket() {
   dashboardSocket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === 'pc_status_change' || data.type === 'stats_update') {
+      if (data.type === 'pc_status_change' || data.type === 'stats_update' || data.type === 'pc_renamed') {
+        if (data.type === 'pc_renamed') {
+          if (activeStreamPc === data.old_name) {
+            activeStreamPc = data.new_name;
+          }
+          if (currentTargetPc === data.old_name) {
+            currentTargetPc = data.new_name;
+          }
+          if (renameTargetPc === data.old_name) {
+            renameTargetPc = data.new_name;
+          }
+        }
         fetchPcs();
       } else if (data.type === 'control_error') {
         showControlError(data.pc, data.message);

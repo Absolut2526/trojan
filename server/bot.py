@@ -63,6 +63,7 @@ def build_main_menu_text() -> str:
         "🎮 <b>Панель керування ПК-клубом</b>\n\n"
         f"📊 Онлайн: <b>{online_count}</b> комп'ютерів\n\n"
         "Оберіть ПК зі списку нижче або скористайтесь швидкими командами:\n"
+        "• <code>/rename PC-01 VIP-01</code> — перейменувати ПК\n"
         "• <code>/screen PC-01</code> — скріншот\n"
         "• <code>/open PC-01 https://url</code> — відкрити сайт\n"
         "• <code>/kill PC-01 dota2.exe</code> — закрити процес\n"
@@ -208,6 +209,26 @@ async def cmd_quick_procs(message: types.Message, command: CommandObject):
         await message.reply("\n".join(lines), parse_mode="HTML")
     else:
         await message.reply(f"❌ Помилка: {resp.get('message')}")
+
+@dp.message(Command("rename"))
+async def cmd_quick_rename(message: types.Message, command: CommandObject):
+    if not is_authorized(message):
+        return
+    args = (command.args or "").strip().split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply("⚠️ Формат: <code>/rename PC-01 VIP-01</code>", parse_mode="HTML")
+        return
+    old_name, new_name = args[0], args[1]
+    msg = await message.reply(f"⏳ Перейменовую <b>{old_name}</b> на <b>{new_name}</b>...", parse_mode="HTML")
+    resp = await manager.rename_pc(old_name, new_name)
+    if resp.get("status") == "ok":
+        await msg.edit_text(
+            f"✅ Комп'ютер <b>{old_name}</b> успішно перейменовано на <b>{new_name}</b>!\n"
+            "💡 Нова назва назавжди закріплена за залізом (HWID).",
+            parse_mode="HTML"
+        )
+    else:
+        await msg.edit_text(f"❌ Помилка: {resp.get('message')}")
 
 # --- Callbacks для меню кнопок ---
 @dp.callback_query(F.data == "refresh_list")

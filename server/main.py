@@ -181,7 +181,7 @@ async def websocket_client_endpoint(
             logger.info(f"Клієнт підключився як '{pc_name}', але за HWID йому призначено '{assigned_name}'")
             pc_name = assigned_name
 
-    await manager.connect_client(pc_name, websocket)
+    await manager.connect_client(pc_name, websocket, hwid=hwid)
     # Повідомляємо клієнту його офіційне ім'я
     await websocket.send_json({"type": "assigned_name", "pc_name": pc_name})
     asyncio.create_task(notify_pc_status(pc_name, "online"))
@@ -191,6 +191,8 @@ async def websocket_client_endpoint(
     try:
         while True:
             data = await websocket.receive_json()
+            # Отримуємо актуальне ім'я ПК (на випадок якщо його перейменували під час підключення)
+            current_pc = manager.get_name_by_websocket(websocket) or pc_name
             msg_type = data.get("type")
 
             if msg_type == "response":
@@ -201,7 +203,7 @@ async def websocket_client_endpoint(
                 if not handled and data.get("status") == "error":
                     await manager.broadcast_to_dashboards({
                         "type": "control_error",
-                        "pc": pc_name,
+                        "pc": current_pc,
                         "action": data.get("action"),
                         "message": data.get("message") or "Невідома помилка на ПК"
                     })
@@ -209,14 +211,14 @@ async def websocket_client_endpoint(
             elif msg_type == "heartbeat":
                 # Heartbeat with CPU/RAM stats
                 stats = data.get("stats", {})
-                manager.update_client_stats(pc_name, stats)
-                await manager.broadcast_to_dashboards({"type": "stats_update", "pc": pc_name, "stats": stats})
+                manager.update_client_stats(current_pc, stats)
+                await manager.broadcast_to_dashboards({"type": "stats_update", "pc": current_pc, "stats": stats})
 
             elif msg_type == "stream_frame":
                 # Forward live screen frame to dashboards
                 await manager.broadcast_to_dashboards({
                     "type": "stream_frame",
-                    "pc": pc_name,
+                    "pc": current_pc,
                     "frame": data.get("frame")
                 })
 
@@ -224,12 +226,14 @@ async def websocket_client_endpoint(
                 await websocket.send_json({"type": "pong"})
 
     except WebSocketDisconnect:
-        manager.disconnect_client(pc_name, websocket)
-        asyncio.create_task(notify_pc_status(pc_name, "offline"))
+        current_pc = manager.get_name_by_websocket(websocket) or pc_name
+        manager.disconnect_client(current_pc, websocket)
+        asyncio.create_task(notify_pc_status(current_pc, "offline"))
     except Exception as e:
-        logger.error(f"WebSocket client error ({pc_name}): {e}")
-        manager.disconnect_client(pc_name, websocket)
-        asyncio.create_task(notify_pc_status(pc_name, "offline"))
+        current_pc = manager.get_name_by_websocket(websocket) or pc_name
+        logger.error(f"WebSocket client error ({current_pc}): {e}")
+        manager.disconnect_client(current_pc, websocket)
+        asyncio.create_task(notify_pc_status(current_pc, "offline"))
 
 # --- WebSocket for Dashboard ---
 @app.websocket("/ws/dashboard")
@@ -288,6 +292,16 @@ async def api_send_command(pc_name: str, req: CommandRequest):
         raise HTTPException(status_code=400, detail=f"Комп'ютер '{pc_name}' не в мережі.")
 
     result = await manager.send_command(pc_name, req.action, req.params)
+    return result
+
+class RenameRequest(BaseModel):
+    new_name: str
+
+@app.post("/api/pcs/{pc_name}/rename", dependencies=[Depends(require_dashboard_auth)])
+async def api_rename_pc(pc_name: str, req: RenameRequest):
+    result = await manager.rename_pc(pc_name, req.new_name)
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=400, detail=result.get("message", "Помилка перейменування"))
     return result
 
 if __name__ == "__main__":

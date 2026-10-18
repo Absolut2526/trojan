@@ -11,3 +11,4 @@ build/
 *.spec
 *.log
 agy
+server/pcs_registry.json

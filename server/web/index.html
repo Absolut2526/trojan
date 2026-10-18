@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Керування ПК Клубом | Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261017_auth">
+  <link rel="stylesheet" href="/static/styles.css?v=20261018_rename">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -222,10 +222,29 @@
         <button id="btnSubmitPic" class="btn btn-primary">🚀 Показати на ПК</button>
       </div>
     </div>
+  <!-- Modal: Rename PC -->
+  <div id="modalRename" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="renameTitle">✏️ Перейменувати комп'ютер</h3>
+        <span class="modal-close">&times;</span>
+      </div>
+      <div class="modal-body">
+        <label for="inputRenameName" style="font-weight:600; display:block; margin-bottom:6px;">Нова назва комп'ютера:</label>
+        <input type="text" id="inputRenameName" placeholder="наприклад, VIP-01 або Стіл 5" class="input-field" maxlength="32" />
+        <div style="font-size:13px; color:var(--text-muted); margin-top:8px; line-height:1.4;">
+          💡 Комп'ютер назавжди запам'ятає це ім'я за своїм залізом (HWID). При наступних включеннях та перезавантаженнях назва збережеться.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelRename" class="btn btn-secondary">Скасувати</button>
+        <button id="btnSubmitRename" class="btn btn-primary">💾 Зберегти назву</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>
 
-  <script src="/static/app.js?v=20261017_auth"></script>
+  <script src="/static/app.js?v=20261018_rename"></script>
 </body>
 </html>

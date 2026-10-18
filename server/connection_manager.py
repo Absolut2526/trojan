@@ -19,6 +19,15 @@ class ConnectionManager:
         self.client_info: Dict[str, Dict[str, Any]] = {}
         # hwid -> pc_name
         self.hwid_mapping: Dict[str, str] = self._load_registry()
+        # Попередньо заповнюємо збережені ПК як offline, щоб їхні імена були відомі
+        for h, n in self.hwid_mapping.items():
+            self.client_info[n] = {
+                "name": n,
+                "status": "offline",
+                "info": {},
+                "connected_at": None,
+                "hwid": h
+            }
         # request_id -> asyncio.Future for command responses
         self.pending_requests: Dict[str, asyncio.Future] = {}
         # Web dashboard sockets
@@ -36,14 +45,26 @@ class ConnectionManager:
     def _save_registry(self):
         try:
             with open(DATA_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.hwid_mapping, f, indent=4)
+                json.dump(self.hwid_mapping, f, indent=4, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Помилка збереження pcs_registry.json: {e}")
 
+    def get_hwid_by_pc_name(self, pc_name: str) -> Optional[str]:
+        """Повертає HWID комп'ютера за його назвою."""
+        # 1. Перевіряємо в client_info
+        if pc_name in self.client_info and self.client_info[pc_name].get("hwid"):
+            return self.client_info[pc_name]["hwid"]
+        # 2. Шукаємо у hwid_mapping
+        for h, name in self.hwid_mapping.items():
+            if name == pc_name:
+                return h
+        return None
+
     def get_or_assign_pc_name(self, hwid: str) -> str:
         """
-        Повертає закріплене ім'я ПК (PC-01, PC-02...) для даного заліза (HWID).
-        Перший комп'ютер назавжди отримує PC-01, другий — PC-02 тощо.
+        Повертає закріплене ім'я ПК для даного заліза (HWID).
+        Якщо ПК перейменовано — завжди повертає його нове збережене ім'я.
+        Якщо новий — призначає найменший вільний номер (PC-01, PC-02...).
         """
         if hwid in self.hwid_mapping:
             return self.hwid_mapping[hwid]
@@ -66,7 +87,98 @@ class ConnectionManager:
         logger.info(f"Нове залізо HWID={hwid} зареєстровано як '{assigned_name}'")
         return assigned_name
 
-    async def connect_client(self, pc_name: str, websocket: WebSocket, initial_info: Optional[Dict[str, Any]] = None):
+    async def rename_pc(self, old_name: str, new_name: str) -> Dict[str, Any]:
+        """
+        Перейменовує комп'ютер та назавжди зберігає його нове ім'я за HWID.
+        """
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+
+        if not new_name:
+            return {"status": "error", "message": "Назва комп'ютера не може бути порожньою."}
+
+        if len(new_name) > 32:
+            return {"status": "error", "message": "Назва комп'ютера не може бути довшою за 32 символи."}
+
+        invalid_chars = set('/\\?%#:*"<>|')
+        if any(c in invalid_chars for c in new_name):
+            return {"status": "error", "message": "Назва містить неприпустимі символи (/ \\ ? % # : * \" < > |)."}
+
+        if old_name == new_name:
+            return {"status": "ok", "message": "Назва не змінилася.", "pc_name": new_name}
+
+        # Перевірка на конфлікт імен з іншими ПК
+        for h, n in self.hwid_mapping.items():
+            if n.lower() == new_name.lower() and n != old_name:
+                return {"status": "error", "message": f"Комп'ютер з назвою '{new_name}' вже зареєстрований."}
+
+        for n in self.client_info.keys():
+            if n.lower() == new_name.lower() and n != old_name:
+                return {"status": "error", "message": f"Комп'ютер з назвою '{new_name}' вже онлайн."}
+
+        # Знаходимо HWID комп'ютера
+        hwid = self.get_hwid_by_pc_name(old_name)
+        if not hwid:
+            # Якщо HWID не був зафіксований раніше, генеруємо стабільний ключ за старим іменем
+            hwid = f"pc_{old_name}"
+
+        # Оновлюємо та зберігаємо у базі
+        self.hwid_mapping[hwid] = new_name
+        self._save_registry()
+
+        # Оновлюємо живі підключення та пам'ять
+        is_online = old_name in self.active_clients
+        ws = None
+        if is_online:
+            ws = self.active_clients.pop(old_name)
+            self.active_clients[new_name] = ws
+
+        if old_name in self.client_info:
+            info_dict = self.client_info.pop(old_name)
+            info_dict["name"] = new_name
+            info_dict["hwid"] = hwid
+            self.client_info[new_name] = info_dict
+        else:
+            self.client_info[new_name] = {
+                "name": new_name,
+                "status": "online" if is_online else "offline",
+                "info": {},
+                "connected_at": time.time() if is_online else None,
+                "hwid": hwid
+            }
+
+        # Сповіщаємо сам комп'ютер, щоб він оновив локальний файл client_config.json
+        if ws:
+            try:
+                await ws.send_text(json.dumps({
+                    "type": "assigned_name",
+                    "pc_name": new_name
+                }))
+            except Exception as e:
+                logger.error(f"Помилка відправки нового імені клієнту {new_name}: {e}")
+
+        # Сповіщаємо всі відкриті веб-панелі (дашборди)
+        await self.broadcast_to_dashboards({
+            "type": "pc_renamed",
+            "old_name": old_name,
+            "new_name": new_name
+        })
+
+        logger.info(f"Комп'ютер '{old_name}' успішно перейменовано на '{new_name}' (HWID={hwid})")
+        return {
+            "status": "ok",
+            "message": f"ПК успішно перейменовано на '{new_name}'",
+            "old_name": old_name,
+            "new_name": new_name
+        }
+
+    async def connect_client(
+        self,
+        pc_name: str,
+        websocket: WebSocket,
+        initial_info: Optional[Dict[str, Any]] = None,
+        hwid: Optional[str] = None
+    ):
         if pc_name in self.active_clients:
             old_ws = self.active_clients[pc_name]
             try:
@@ -76,13 +188,15 @@ class ConnectionManager:
         await websocket.accept()
         now = time.time()
         self.active_clients[pc_name] = websocket
+        existing_info = self.client_info.get(pc_name, {})
         self.client_info[pc_name] = {
             "name": pc_name,
             "status": "online",
-            "info": initial_info or self.client_info.get(pc_name, {}).get("info", {}),
-            "connected_at": now
+            "info": initial_info or existing_info.get("info", {}),
+            "connected_at": now,
+            "hwid": hwid or existing_info.get("hwid") or self.get_hwid_by_pc_name(pc_name)
         }
-        logger.info(f"Client '{pc_name}' connected.")
+        logger.info(f"Client '{pc_name}' connected (HWID={self.client_info[pc_name]['hwid']}).")
         await self.broadcast_to_dashboards({
             "type": "pc_status_change",
             "pc": pc_name,
@@ -90,16 +204,29 @@ class ConnectionManager:
             "connected_at": now
         })
 
+    def get_name_by_websocket(self, websocket: WebSocket) -> Optional[str]:
+        """Знаходить поточне ім'я комп'ютера за його активним WebSocket об'єктом."""
+        for name, ws in self.active_clients.items():
+            if ws == websocket:
+                return name
+        return None
+
     def disconnect_client(self, pc_name: str, websocket: Optional[WebSocket] = None):
-        if pc_name in self.active_clients:
-            if websocket is None or self.active_clients[pc_name] == websocket:
-                del self.active_clients[pc_name]
-                if pc_name in self.client_info:
-                    self.client_info[pc_name]["status"] = "offline"
-                    self.client_info[pc_name]["connected_at"] = None
-                logger.info(f"Client '{pc_name}' disconnected.")
+        target_name = pc_name
+        if websocket and (target_name not in self.active_clients or self.active_clients[target_name] != websocket):
+            found = self.get_name_by_websocket(websocket)
+            if found:
+                target_name = found
+
+        if target_name in self.active_clients:
+            if websocket is None or self.active_clients[target_name] == websocket:
+                del self.active_clients[target_name]
+                if target_name in self.client_info:
+                    self.client_info[target_name]["status"] = "offline"
+                    self.client_info[target_name]["connected_at"] = None
+                logger.info(f"Client '{target_name}' disconnected.")
                 asyncio.create_task(
-                    self.broadcast_to_dashboards({"type": "pc_status_change", "pc": pc_name, "status": "offline"})
+                    self.broadcast_to_dashboards({"type": "pc_status_change", "pc": target_name, "status": "offline"})
                 )
 
     def is_online(self, pc_name: str) -> bool:
@@ -113,7 +240,8 @@ class ConnectionManager:
                 "name": name,
                 "status": "online" if is_online else "offline",
                 "info": data.get("info", {}),
-                "connected_at": data.get("connected_at") if is_online else None
+                "connected_at": data.get("connected_at") if is_online else None,
+                "hwid": data.get("hwid")
             }
         return result
 

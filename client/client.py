@@ -486,6 +486,15 @@ def load_or_create_config() -> dict:
         logger.error(f"Помилка читання {CONFIG_FILE}: {e}")
         return default_config
 
+def save_config(cfg: dict):
+    """Зберігає конфігурацію клієнта у client_config.json."""
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+        logger.info(f"💾 Конфігурацію збережено: {CONFIG_FILE}")
+    except Exception as e:
+        logger.error(f"Помилка запису в {CONFIG_FILE}: {e}")
+
 def get_cursor_pos():
     """Отримує поточні координати курсору миші."""
     sys_name = platform.system().lower()
@@ -935,6 +944,15 @@ async def execute_action(action: str, params: dict, websocket=None) -> dict:
             asyncio.get_event_loop().call_later(1.0, execute_shutdown)
             return {"status": "ok", "message": "ПК вимикається..."}
 
+        elif action in ("set_pc_name", "rename"):
+            new_name = (params.get("new_name") or "").strip()
+            if new_name:
+                cfg = load_or_create_config()
+                cfg["pc_name"] = new_name
+                save_config(cfg)
+                return {"status": "ok", "message": f"Ім'я комп'ютера змінено на '{new_name}'", "pc_name": new_name}
+            return {"status": "error", "message": "Порожній параметр new_name"}
+
         else:
             return {"status": "error", "message": f"Невідома дія: {action}"}
 
@@ -976,16 +994,17 @@ async def heartbeat_sender(websocket):
 
 async def run_client():
     global is_streaming, stream_task
-    cfg = load_or_create_config()
-    server_base = cfg["server_url"].rstrip("/")
-    secret = cfg["secret"]
-    pc_name = cfg["pc_name"]
-    hwid = cfg.get("hwid", get_hardware_id())
-
-    uri = f"{server_base}/{pc_name}?secret={secret}&hwid={hwid}"
-    logger.info(f"Підключення до сервера (HWID={hwid})...")
 
     while True:
+        cfg = load_or_create_config()
+        server_base = cfg["server_url"].rstrip("/")
+        secret = cfg["secret"]
+        pc_name = cfg["pc_name"]
+        hwid = cfg.get("hwid", get_hardware_id())
+
+        uri = f"{server_base}/{pc_name}?secret={secret}&hwid={hwid}"
+        logger.info(f"Підключення до сервера як '{pc_name}' (HWID={hwid})...")
+
         try:
             async with websockets.connect(
                 uri,
@@ -994,7 +1013,7 @@ async def run_client():
                 close_timeout=10,
                 max_size=25 * 1024 * 1024
             ) as websocket:
-                logger.info("✅ Успішно підключено до сервера!")
+                logger.info(f"✅ Успішно підключено до сервера як '{pc_name}'!")
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
                 if not is_streaming:
                     is_streaming = True
@@ -1007,7 +1026,15 @@ async def run_client():
                                 message_str = message_str.decode('utf-8', errors='ignore')
                             msg = json.loads(message_str)
                             if msg.get("type") == "assigned_name":
-                                logger.info(f"🌟 Цьому ПК офіційно призначено ім'я: {msg.get('pc_name')}")
+                                new_name = msg.get("pc_name")
+                                logger.info(f"🌟 Цьому ПК офіційно призначено ім'я: {new_name}")
+                                try:
+                                    current_cfg = load_or_create_config()
+                                    if not os.path.exists(CONFIG_FILE) or current_cfg.get("pc_name") != new_name:
+                                        current_cfg["pc_name"] = new_name
+                                        save_config(current_cfg)
+                                except Exception as e:
+                                    logger.warning(f"Не вдалося оновити client_config.json: {e}")
                                 continue
 
                             req_id = msg.get("request_id")
