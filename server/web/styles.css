@@ -193,6 +193,9 @@ body {
   align-items: center;
   justify-content: center;
   line-height: 1;
+  position: relative;
+  z-index: 5;
+  user-select: none;
 }
 
 .btn-rename-icon:hover {

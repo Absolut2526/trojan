@@ -102,7 +102,7 @@ function buildCardHtml(name, orderNum, osName, cpu, ram) {
         <span class="pc-order-badge" id="order-badge-${name}">№${orderNum}</span>
         <div class="pc-name" id="name-${name}">
           <span class="pc-name-text">🖥 ${name}</span>
-          <button class="btn-rename-icon" onclick="openRenameModal('${safeName}')" title="Перейменувати комп'ютер">✏️</button>
+          <button class="btn-rename-icon" onclick="openRenameModal('${safeName}', event)" title="Перейменувати комп'ютер">✏️</button>
         </div>
         <div class="pc-badge badge-online" id="badge-${name}">
           <span class="status-dot"></span> Онлайн
@@ -149,7 +149,7 @@ function updateCard(card, name, orderNum, osName, cpu, ram) {
     const safeName = (name || '').replace(/'/g, "\\'");
     nameEl.innerHTML = `
       <span class="pc-name-text">🖥 ${name}</span>
-      <button class="btn-rename-icon" onclick="openRenameModal('${safeName}')" title="Перейменувати комп'ютер">✏️</button>
+      <button class="btn-rename-icon" onclick="openRenameModal('${safeName}', event)" title="Перейменувати комп'ютер">✏️</button>
     `;
   }
 
@@ -431,7 +431,11 @@ window.confirmShutdown = async (pcName) => {
 };
 
 // ✏️ Rename PC Modal
-window.openRenameModal = (pcName) => {
+window.openRenameModal = (pcName, ev) => {
+  if (ev) {
+    ev.stopPropagation();
+    ev.preventDefault();
+  }
   renameTargetPc = pcName;
   if (renameTitle) {
     renameTitle.textContent = `✏️ Перейменувати: ${pcName}`;
