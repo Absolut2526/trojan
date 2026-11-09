@@ -988,7 +988,7 @@ async def heartbeat_sender(websocket):
                 "keyboard": input_backend_name()
             }
             await websocket.send(json.dumps({"type": "heartbeat", "stats": stats}))
-            await asyncio.sleep(5)
+            await asyncio.sleep(15)
         except Exception:
             break
 
@@ -1015,9 +1015,7 @@ async def run_client():
             ) as websocket:
                 logger.info(f"✅ Успішно підключено до сервера як '{pc_name}'!")
                 heartbeat_task = asyncio.create_task(heartbeat_sender(websocket))
-                if not is_streaming:
-                    is_streaming = True
-                    stream_task = asyncio.create_task(stream_loop(websocket, target_fps=8))
+                # Трансляція запускається виключно на вимогу за командою start_stream
 
                 try:
                     async for message_str in websocket:

@@ -185,8 +185,7 @@ async def websocket_client_endpoint(
     # Повідомляємо клієнту його офіційне ім'я
     await websocket.send_json({"type": "assigned_name", "pc_name": pc_name})
     asyncio.create_task(notify_pc_status(pc_name, "online"))
-    # Автоматично запускаємо трансляцію екрану при підключенні ПК
-    asyncio.create_task(manager.send_command(pc_name, "start_stream", {"fps": 8}))
+    # Трансляція екрану запускається виключно за вимогою (on-demand), щоб не споживати трафік!
 
     try:
         while True:
@@ -215,12 +214,15 @@ async def websocket_client_endpoint(
                 await manager.broadcast_to_dashboards({"type": "stats_update", "pc": current_pc, "stats": stats})
 
             elif msg_type == "stream_frame":
-                # Forward live screen frame to dashboards
-                await manager.broadcast_to_dashboards({
-                    "type": "stream_frame",
-                    "pc": current_pc,
-                    "frame": data.get("frame")
-                })
+                # Якщо жоден дашборд не підключений — зупиняємо непотрібну трансляцію для економії трафіку
+                if not manager.dashboard_sockets:
+                    asyncio.create_task(manager.send_command(current_pc, "stop_stream"))
+                else:
+                    await manager.broadcast_to_dashboards({
+                        "type": "stream_frame",
+                        "pc": current_pc,
+                        "frame": data.get("frame")
+                    })
 
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
@@ -245,9 +247,6 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
         return
 
     await manager.connect_dashboard(websocket)
-    # При підключенні дашборду гарантуємо, що всі онлайн ПК транслюють екран
-    for active_pc in list(manager.active_clients.keys()):
-        asyncio.create_task(manager.send_command(active_pc, "start_stream", {"fps": 8}))
     try:
         while True:
             raw = await websocket.receive_text()
@@ -267,10 +266,12 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
                 if not manager.is_online(target_pc):
                     continue
                 asyncio.create_task(manager.send_action(target_pc, action, params))
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
         manager.disconnect_dashboard(websocket)
-    except Exception:
-        manager.disconnect_dashboard(websocket)
+        # Якщо всі дашборди закрились — зупиняємо стріми на всіх ПК для економії трафіку
+        if not manager.dashboard_sockets:
+            for active_pc in list(manager.active_clients.keys()):
+                asyncio.create_task(manager.send_command(active_pc, "stop_stream"))
 
 # --- REST APIs for Web UI ---
 @app.get("/api/pcs", dependencies=[Depends(require_dashboard_auth)])

@@ -126,13 +126,13 @@ function buildCardHtml(name, orderNum, osName, cpu, ram) {
     </div>
 
     <!-- ДЕМОНСТРАЦІЯ ЕКРАНУ (ПІД КНОПКАМИ КЕРУВАННЯ) -->
-    <div class="pc-screen-wrapper clickable" id="screen-wrapper-${name}" onclick="openStream('${name}')" title="Натисніть для збільшення трансляції">
+    <div class="pc-screen-wrapper clickable" id="screen-wrapper-${name}" onclick="openStream('${name}')" title="Натисніть для перегляду трансляції">
       <div class="screen-loading" id="loader-${name}">
-        <div class="spinner-small"></div>
-        <span>Очікування трансляції...</span>
+        <span style="font-size: 26px;">📺</span>
+        <span style="font-size: 13px; font-weight: 500;">Натисніть для перегляду</span>
       </div>
       <img id="stream-img-${name}" class="pc-stream-image" src="" alt="Трансляція ${name}" style="display:none;" />
-      <div class="screen-overlay-expand">⛶ Розгорнути</div>
+      <div class="screen-overlay-expand">⛶ Відкрити екран</div>
     </div>
   `;
 }
@@ -784,12 +784,17 @@ window.changeStreamFps = async (fps) => {
 };
 
 // 🔴 Live Screen Stream (Демонстрація екрану на весь екран / у модальному вікні)
-window.openStream = (pcName) => {
+window.openStream = async (pcName) => {
+  if (activeStreamPc && activeStreamPc !== pcName) {
+    const prevPc = activeStreamPc;
+    sendCommand(prevPc, 'stop_stream').catch(() => {});
+  }
+
   activeStreamPc = pcName;
   document.getElementById('streamTitle').textContent = `🔴 Демонстрація екрану: ${getDisplayPcTitle(pcName)}`;
   refreshInputButtons();
 
-  // Якщо в картці ПК вже транслюється екран — відображаємо його одразу без затримки
+  // Якщо в картці ПК вже є кадр — відображаємо його одразу без затримки
   const cardImg = document.getElementById(`stream-img-${pcName}`);
   if (cardImg && cardImg.src && cardImg.src.startsWith('data:image')) {
     streamImg.src = cardImg.src;
@@ -800,11 +805,22 @@ window.openStream = (pcName) => {
     streamSpinner.style.display = 'block';
   }
 
-  streamFps.textContent = 'Трансляція активна';
+  streamFps.textContent = 'Підключення...';
   modalStream.classList.add('active');
+
+  // Надсилаємо команду старту стріму для конкретного ПК (on-demand)
+  try {
+    const res = await sendCommand(pcName, 'start_stream', { fps: currentFps });
+    if (res && res.status === 'ok') {
+      streamFps.textContent = 'Трансляція активна';
+    }
+  } catch (err) {
+    showToast(`Помилка підключення трансляції: ${err.message}`, true);
+  }
 };
 
 window.closeStream = () => {
+  const stoppingPc = activeStreamPc;
   if (mouseControlEnabled) setMouseControl(false, true);
   if (keyboardCaptureEnabled) setKeyboardCapture(false, true);
   isDragging = false;
@@ -813,6 +829,11 @@ window.closeStream = () => {
   streamImg.src = '';
   streamImg.style.display = 'none';
   streamSpinner.style.display = 'none';
+
+  // Зупиняємо трансляцію на ПК для економії трафіку
+  if (stoppingPc) {
+    sendCommand(stoppingPc, 'stop_stream').catch(() => {});
+  }
 };
 
 // 🖱 Керування мишею віддаленого ПК прямо з трансляції
@@ -1193,3 +1214,12 @@ btnRefresh.onclick = fetchPcs;
 fetchPcs();
 setupDashboardWebSocket();
 setInterval(fetchPcs, 10000);
+
+window.addEventListener('beforeunload', () => {
+  if (activeStreamPc) {
+    try {
+      const blob = new Blob([JSON.stringify({ action: 'stop_stream', params: {} })], { type: 'application/json' });
+      navigator.sendBeacon(`/api/pcs/${encodeURIComponent(activeStreamPc)}/command`, blob);
+    } catch (e) {}
+  }
+});
